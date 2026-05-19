@@ -35,7 +35,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import butter, filtfilt, find_peaks
 
-from ler_dados_schema_serial import SAMPLE_RATE_HZ, carregar_aquisicao, converter_para_si
+from ler_dados import SAMPLE_RATE_HZ, carregar_aquisicao, converter_para_si
 
 
 def estimar_fs_hz(dados: dict[str, np.ndarray], fallback: float = SAMPLE_RATE_HZ) -> float:
