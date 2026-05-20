@@ -35,6 +35,10 @@ CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 CHAR_DATA_UUID = "0000ff02-0000-1000-8000-00805f9b34fb"
 CHAR_CONTROL_UUID = "0000ff03-0000-1000-8000-00805f9b34fb"
 ACK_BYTE = b"\x01"
+
+# Alinhar com firmware (XFER_CHUNK_SIZE * 8 se firmware usar burst de 8)
+XFER_CHUNK_SIZE = 244
+BYTES_PER_ACK = XFER_CHUNK_SIZE * 8
 DRAIN_AFTER_FOOTER_S = 20.0
 
 NotifyCallback = Callable[[BleakGATTCharacteristic, bytearray], None]
@@ -42,7 +46,7 @@ NotifyCallback = Callable[[BleakGATTCharacteristic, bytearray], None]
 
 class SessionStore:
     def __init__(self, out_dir: Path) -> None:
-        self.out_dir = out_dir
+        self.out_dir = out_dir.resolve()
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self._next_index = self._scan_next_index()
 
@@ -68,16 +72,17 @@ class BleRunReceiver:
         self.source_path = ""
         self.payload = bytearray()
         self.receiving_binary = False
-        self.footer_seen = False
-        self.xfer_ok_line = False
         self.xfer_done = asyncio.Event()
         self.xfer_ok = False
         self._active_xfer = False
+        self._bytes_since_ack = 0
         self._last_progress_pct = -1
         self._finalizing = False
         self._drain_task: asyncio.Task[None] | None = None
+        self._finalize_generation = 0
 
-    def reset_between_xfers(self) -> None:
+    def begin_new_transfer(self) -> None:
+        """Chamado ao receber ===BEGIN_LAST_RUN_BIN===."""
         if self._drain_task and not self._drain_task.done():
             self._drain_task.cancel()
         self._drain_task = None
@@ -85,13 +90,37 @@ class BleRunReceiver:
         self.source_path = ""
         self.payload.clear()
         self.receiving_binary = False
-        self.footer_seen = False
-        self.xfer_ok_line = False
         self.xfer_ok = False
-        self._active_xfer = False
+        self._active_xfer = True
+        self._bytes_since_ack = 0
         self._last_progress_pct = -1
         self._finalizing = False
+        self._finalize_generation += 1
         self.xfer_done.clear()
+
+    def prepare_for_next_wait(self) -> None:
+        """Apos salvar ou descartar — pronto para proxima corrida."""
+        if self._drain_task and not self._drain_task.done():
+            self._drain_task.cancel()
+        self._drain_task = None
+        self._active_xfer = False
+        self._finalizing = False
+        self.xfer_done.clear()
+
+    def _request_ack(self) -> None:
+        try:
+            self._ack_queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+
+    def _maybe_request_ack(self, nbytes: int) -> None:
+        if self.expected_size is None:
+            return
+        self._bytes_since_ack += nbytes
+        complete = len(self.payload) >= self.expected_size
+        if complete or self._bytes_since_ack >= BYTES_PER_ACK:
+            self._bytes_since_ack = 0
+            self._request_ack()
 
     def _accept_data(self, data: bytes) -> None:
         if self.expected_size is None:
@@ -109,11 +138,7 @@ class BleRunReceiver:
                 self._last_progress_pct = pct
                 print(f"[DATA]   {len(self.payload)}/{self.expected_size} bytes ({pct}%)")
 
-        if self.receiving_binary or len(self.payload) < self.expected_size:
-            try:
-                self._ack_queue.put_nowait(None)
-            except asyncio.QueueFull:
-                pass
+        self._maybe_request_ack(len(data))
 
     def _schedule_finalize(self) -> None:
         if not self._active_xfer:
@@ -124,26 +149,27 @@ class BleRunReceiver:
             return
         if self._drain_task and not self._drain_task.done():
             return
-        self._drain_task = self._loop.create_task(self._finalize_xfer())
+        generation = self._finalize_generation
+        self._drain_task = self._loop.create_task(self._finalize_xfer(generation))
 
-    async def _finalize_xfer(self) -> None:
-        if not self._active_xfer:
-            return
-        if self.expected_size is None and len(self.payload) == 0:
+    async def _finalize_xfer(self, generation: int) -> None:
+        if generation != self._finalize_generation or not self._active_xfer:
             return
         if self._finalizing:
-            return
-        if self.xfer_done.is_set() and self.xfer_ok:
             return
         self._finalizing = True
         try:
             deadline = self._loop.time() + DRAIN_AFTER_FOOTER_S
             while (
-                self.expected_size is not None
+                generation == self._finalize_generation
+                and self.expected_size is not None
                 and len(self.payload) < self.expected_size
                 and self._loop.time() < deadline
             ):
                 await asyncio.sleep(0.02)
+
+            if generation != self._finalize_generation:
+                return
 
             self.receiving_binary = False
             complete = (
@@ -151,6 +177,7 @@ class BleRunReceiver:
                 and len(self.payload) == self.expected_size
             )
             self.xfer_ok = complete
+            self._active_xfer = False
 
             if not complete:
                 got = len(self.payload)
@@ -179,8 +206,7 @@ class BleRunReceiver:
         print(f"[STATUS] {text}")
 
         if text == "===BEGIN_LAST_RUN_BIN===":
-            self.reset_between_xfers()
-            self._active_xfer = True
+            self.begin_new_transfer()
             return
 
         if text.startswith("PATH:"):
@@ -195,18 +221,16 @@ class BleRunReceiver:
         if text == "DATA_BEGIN":
             self.receiving_binary = True
             self.payload.clear()
-            self.footer_seen = False
-            self.xfer_ok_line = False
+            self._bytes_since_ack = 0
             self._last_progress_pct = -1
+            self._request_ack()
             return
 
         if text in ("DATA_END", "===END_LAST_RUN_BIN==="):
-            self.footer_seen = True
             self._schedule_finalize()
             return
 
         if text == "XFER: OK":
-            self.xfer_ok_line = True
             self._schedule_finalize()
             return
 
@@ -297,21 +321,24 @@ async def find_device(name: str, scan_timeout: float) -> object:
     raise RuntimeError(f"Dispositivo '{name}' nao encontrado")
 
 
-async def _save_one_xfer(
+def _save_one_xfer(
     receiver: BleRunReceiver,
     store: SessionStore,
     also_save_bin: bool,
 ) -> Path:
     metadata = {
         "path": receiver.source_path or "/last_run.bin",
-        "size": str(receiver.expected_size or len(receiver.payload)),
+        "size": str(len(receiver.payload)),
     }
     csv_path = store.next_csv_path()
     payload = bytes(receiver.payload)
     calib, rows = parse_payload_to_rows(payload)
     write_csv(csv_path, calib, rows, metadata)
 
-    print(f"\nSalvo: {csv_path.resolve()}")
+    if not csv_path.is_file() or csv_path.stat().st_size == 0:
+        raise OSError(f"Falha ao gravar CSV em disco: {csv_path}")
+
+    print(f"\nSalvo: {csv_path}")
     print(f"  bytes payload : {len(payload)}")
     print(f"  amostras      : {len(rows)}")
     print(f"  calibracao    : {calib['calib_valid']}")
@@ -330,7 +357,7 @@ async def run_session(
     also_save_bin: bool,
 ) -> None:
     loop = asyncio.get_running_loop()
-    ack_queue: asyncio.Queue[None] = asyncio.Queue(maxsize=256)
+    ack_queue: asyncio.Queue[None] = asyncio.Queue(maxsize=512)
     receiver = BleRunReceiver(loop, ack_queue)
     store = SessionStore(out_dir)
 
@@ -346,23 +373,26 @@ async def run_session(
         await asyncio.sleep(0.3)
         await _start_notify_retry(client, data_char, receiver.on_data, "Data")
 
-        print(f"Sessoes em: {out_dir.resolve()}")
+        out_abs = store.out_dir.resolve()
+        print(f"Sessoes serao salvas em: {out_abs}")
+        print("(nao use mais ble_sessions/ — pasta antiga)")
         print("No device: calibre -> grave -> pare (repita). Ctrl+C para sair.\n")
+
+        receiver.prepare_for_next_wait()
 
         try:
             while client.is_connected:
-                receiver.reset_between_xfers()
-                try:
-                    await receiver.xfer_done.wait()
-                except asyncio.CancelledError:
-                    break
+                await receiver.xfer_done.wait()
 
-                receiver._active_xfer = False
                 if receiver.xfer_ok:
-                    await _save_one_xfer(receiver, store, also_save_bin)
+                    try:
+                        _save_one_xfer(receiver, store, also_save_bin)
+                    except Exception as exc:
+                        print(f"[ERRO] Falha ao salvar CSV: {exc}", file=sys.stderr)
                 else:
                     print("Sessao descartada (transferencia incompleta).\n")
-                receiver.reset_between_xfers()
+
+                receiver.prepare_for_next_wait()
         finally:
             ack_task.cancel()
             try:

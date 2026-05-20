@@ -45,7 +45,6 @@ from pbl_data.format import (
     GYRO_SENSITIVITY_LSB_PER_DPS,
     HEADER_FMT,
     HEADER_SIZE,
-    SAMPLE_FMT,
     SAMPLE_RATE_HZ,
     SAMPLE_SIZE,
 )

@@ -222,6 +222,12 @@ def main() -> None:
                         help="Não abre janela de plot")
     args = parser.parse_args()
 
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
     caminho = Path(args.arquivo)
     calib, samples = carregar_aquisicao(caminho)
     dados = converter_para_si(samples, calib)

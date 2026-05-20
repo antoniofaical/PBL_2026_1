@@ -57,7 +57,10 @@ pip install -r requirements.txt
 
 ```bash
 python receive_ble.py
+# ou (atalho): python test_ble.py
 ```
+
+Os CSVs vao para **`data/sessions/run_001.csv`**, nao mais `ble_sessions/`.
 
 Opções:
 

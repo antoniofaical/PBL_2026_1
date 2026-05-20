@@ -12,7 +12,8 @@ SAMPLE_RATE_HZ = 500.0
 # Cabeçalho LittleFS: 6 floats + bool + padding = 28 bytes
 CALIB_STRUCT = struct.Struct("<6f?3x")
 # Amostra: t_ms + 6 int16 = 16 bytes
-SAMPLE_STRUCT = struct.Struct("<Ihhhhhh")
+SAMPLE_FMT = "<Ihhhhhh"
+SAMPLE_STRUCT = struct.Struct(SAMPLE_FMT)
 
 CALIB_SIZE = CALIB_STRUCT.size
 SAMPLE_SIZE = SAMPLE_STRUCT.size

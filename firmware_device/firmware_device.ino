@@ -78,10 +78,12 @@ static constexpr char CHAR_STATUS_UUID[]  = "beb5483e-36e1-4688-b7f5-ea07361b26a
 static constexpr char CHAR_DATA_UUID[]    = "0000ff02-0000-1000-8000-00805f9b34fb";
 static constexpr char CHAR_CONTROL_UUID[] = "0000ff03-0000-1000-8000-00805f9b34fb";
 
-static constexpr size_t XFER_CHUNK_SIZE = 120;
-static constexpr uint32_t XFER_CHUNK_INTERVAL_MS = 12;
-static constexpr uint32_t XFER_ACK_TIMEOUT_MS = 8000;
-static constexpr uint32_t XFER_POST_DRAIN_MS = 1500;
+// Deve coincidir com BYTES_PER_ACK em receive_ble.py (244 * 8)
+static constexpr size_t XFER_CHUNK_SIZE = 244;
+static constexpr size_t XFER_BYTES_PER_ACK = XFER_CHUNK_SIZE * 8;
+static constexpr uint32_t XFER_ACK_TIMEOUT_MS = 20000;
+static constexpr uint32_t XFER_POST_DRAIN_MS = 400;
+static constexpr uint32_t XFER_INTER_CHUNK_DELAY_MS = 3;
 
 // ---------------------------------------------------------------------------
 // Estados da FSM
@@ -167,7 +169,6 @@ static File xferFile;
 static size_t xferTotalBytes = 0;
 static size_t xferSentBytes = 0;
 static uint8_t xferChunk[XFER_CHUNK_SIZE];
-static uint32_t xferLastChunkMs = 0;
 static bool xferAwaitingAck = false;
 static uint32_t xferAckDeadlineMs = 0;
 static uint32_t xferPostDrainUntilMs = 0;
@@ -554,7 +555,6 @@ static void xferReset() {
   xferPhase = XFER_OPEN_FILE;
   xferTotalBytes = 0;
   xferSentBytes = 0;
-  xferLastChunkMs = 0;
   xferAwaitingAck = false;
   xferAckDeadlineMs = 0;
   xferPostDrainUntilMs = 0;
@@ -574,8 +574,19 @@ static int xferAckState() {
   return 0;
 }
 
-static bool xferSendChunkAndWaitAck() {
-  if (!xferSendPayloadChunk()) return false;
+static bool xferSendBurstAndWaitAck() {
+  size_t sent = 0;
+  while (xferSentBytes < xferTotalBytes && sent < XFER_BYTES_PER_ACK) {
+    const size_t before = xferSentBytes;
+    if (!xferSendPayloadChunk()) return false;
+    sent += (xferSentBytes - before);
+    if (xferSentBytes < xferTotalBytes) {
+      delay(XFER_INTER_CHUNK_DELAY_MS);
+    }
+  }
+  if (sent == 0 && xferSentBytes >= xferTotalBytes) {
+    return true;
+  }
   xferAwaitingAck = true;
   xferAckDeadlineMs = millis() + XFER_ACK_TIMEOUT_MS;
   return true;
@@ -656,7 +667,6 @@ static void xferTick() {
       bleXferAck = false;
       xferAwaitingAck = false;
       xferPhase = XFER_SEND_PAYLOAD;
-      xferLastChunkMs = 0;
       break;
 
     case XFER_SEND_PAYLOAD: {
@@ -672,12 +682,10 @@ static void xferTick() {
         xferPostDrainUntilMs = millis() + XFER_POST_DRAIN_MS;
         break;
       }
-      if (millis() - xferLastChunkMs < XFER_CHUNK_INTERVAL_MS) return;
-      if (!xferSendChunkAndWaitAck()) {
+      if (!xferSendBurstAndWaitAck()) {
         xferFail();
         return;
       }
-      xferLastChunkMs = millis();
       break;
     }
 
