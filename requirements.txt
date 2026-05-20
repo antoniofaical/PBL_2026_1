@@ -1,0 +1,10 @@
+# Receptor BLE (receive_ble.py)
+bleak>=0.21.0
+
+# Receptor serial (receive_serial.py)
+pyserial>=3.5
+
+# Analise (ler_dados.py, detectar_eventos.py)
+numpy>=1.24.0
+matplotlib>=3.7.0
+scipy>=1.10.0

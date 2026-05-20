@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Dados gerados (sessoes de corrida)
+data/sessions/*.csv
+data/sessions/*.bin
+ble_sessions/
+last_run*.csv
+last_run*.bin
+*.bin
+
+# Logs e artefatos locais
+output.txt
+*.log
+
+# Arduino / IDE
+*.hex
+*.elf
+.build/
+
+# Secrets (futuro WiFi)
+secrets.h
+config_private.h
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

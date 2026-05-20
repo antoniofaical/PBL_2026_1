@@ -1,13 +1,13 @@
+#!/usr/bin/env python3
 """
-test_ble.py — receptor BLE do firmware Etapa 11 (PBL-Run-C3).
+Receptor BLE — aquisicao wireless (Etapa 11).
 
-Requer firmware com characteristic Control (0000ff03) para ACK por chunk.
+Conecta ao PBL-Run-C3, recebe status em tempo real e salva cada gravacao
+como CSV numerado em data/sessions/.
 
 Uso:
-    pip install bleak
-    python test_ble.py
-
-Ctrl+C encerra com mensagem de despedida.
+    pip install -r requirements.txt
+    python receive_ble.py
 """
 
 from __future__ import annotations
@@ -24,10 +24,10 @@ try:
     from bleak.backends.characteristic import BleakGATTCharacteristic
     from bleak.exc import BleakError
 except ImportError:
-    print("ERRO: instale bleak com: pip install bleak", file=sys.stderr)
+    print("ERRO: pip install bleak", file=sys.stderr)
     raise
 
-from receive_esp32_com10_to_csv import parse_payload_to_rows, write_csv
+from pbl_data import parse_payload_to_rows, write_csv
 
 DEVICE_NAME = "PBL-Run-C3"
 SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -35,8 +35,6 @@ CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 CHAR_DATA_UUID = "0000ff02-0000-1000-8000-00805f9b34fb"
 CHAR_CONTROL_UUID = "0000ff03-0000-1000-8000-00805f9b34fb"
 ACK_BYTE = b"\x01"
-
-# Backup se algum chunk atrasar apos o footer (WinRT).
 DRAIN_AFTER_FOOTER_S = 20.0
 
 NotifyCallback = Callable[[BleakGATTCharacteristic, bytearray], None]
@@ -111,7 +109,6 @@ class BleRunReceiver:
                 self._last_progress_pct = pct
                 print(f"[DATA]   {len(self.payload)}/{self.expected_size} bytes ({pct}%)")
 
-        # ACK por chunk — libera proximo notify no firmware.
         if self.receiving_binary or len(self.payload) < self.expected_size:
             try:
                 self._ack_queue.put_nowait(None)
@@ -159,7 +156,6 @@ class BleRunReceiver:
                 got = len(self.payload)
                 exp = self.expected_size or 0
                 print(f"[ERRO] Transferencia incompleta: {got}/{exp} bytes")
-                print("       Reflash o firmware Etapa 11+ (ACK) se ainda nao fez.")
 
             if not self.xfer_done.is_set():
                 self.xfer_done.set()
@@ -171,7 +167,6 @@ class BleRunReceiver:
         if not text:
             return
 
-        # Footers/IDLE que chegam apos o script ja ter salvo a sessao (BLE atrasado).
         if not self._active_xfer and text in (
             "DATA_END",
             "===END_LAST_RUN_BIN===",
@@ -234,23 +229,18 @@ async def ack_writer(
     control_char: BleakGATTCharacteristic,
     ack_queue: asyncio.Queue[None],
 ) -> None:
-    """Envia ACK (0x01) na Control char apos cada chunk recebido."""
     while client.is_connected:
         await ack_queue.get()
+        while True:
+            try:
+                ack_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
         try:
             await client.write_gatt_char(control_char, ACK_BYTE, response=False)
         except (OSError, BleakError) as exc:
             print(f"[ACK] falha ao enviar: {exc}")
-            await asyncio.sleep(0.05)
-
-
-def _dump_services(client: BleakClient) -> None:
-    print("Servicos GATT descobertos:")
-    for service in client.services:
-        print(f"  service {service.uuid}")
-        for char in service.characteristics:
-            props = ",".join(char.properties)
-            print(f"    char {char.uuid} [{props}]")
+            await asyncio.sleep(0.02)
 
 
 async def _resolve_characteristics(
@@ -260,17 +250,14 @@ async def _resolve_characteristics(
     _ = client.services
     service = client.services.get_service(SERVICE_UUID)
     if service is None:
-        _dump_services(client)
         raise RuntimeError(f"Servico nao encontrado: {SERVICE_UUID}")
 
     status = service.get_characteristic(CHAR_STATUS_UUID)
     data = service.get_characteristic(CHAR_DATA_UUID)
     control = service.get_characteristic(CHAR_CONTROL_UUID)
     if status is None or data is None or control is None:
-        _dump_services(client)
         raise RuntimeError(
-            "Characteristics Status, Data ou Control nao encontradas. "
-            "Reflash firmware Etapa 11 com ACK (0000ff03)."
+            "Characteristics Status/Data/Control ausentes — reflash firmware Etapa 11."
         )
     return status, data, control
 
@@ -286,15 +273,13 @@ async def _start_notify_retry(
     for attempt in range(1, retries + 1):
         try:
             await client.start_notify(char, callback)
-            print(f"Notify ativo: {label} ({char.uuid})")
+            print(f"Notify ativo: {label}")
             return
         except (OSError, BleakError) as exc:
             last_exc = exc
-            wait_s = 0.6 * attempt
-            print(f"Notify {label} falhou (tentativa {attempt}/{retries}): {exc}")
             if attempt < retries:
-                await asyncio.sleep(wait_s)
-    raise RuntimeError(f"Nao foi possivel habilitar notify em {label}") from last_exc
+                await asyncio.sleep(0.6 * attempt)
+    raise RuntimeError(f"Notify {label} falhou") from last_exc
 
 
 async def find_device(name: str, scan_timeout: float) -> object:
@@ -307,7 +292,6 @@ async def find_device(name: str, scan_timeout: float) -> object:
         print(f"Encontrado: {device.name} [{device.address}]")
         return device
 
-    print("Dispositivos BLE visiveis:")
     for d in await BleakScanner.discover(timeout=scan_timeout):
         print(f"  - {d.name or '(sem nome)'} [{d.address}]")
     raise RuntimeError(f"Dispositivo '{name}' nao encontrado")
@@ -336,7 +320,6 @@ async def _save_one_xfer(
         bin_path = csv_path.with_suffix(".bin")
         bin_path.write_bytes(payload)
         print(f"  bin copia     : {bin_path.resolve()}")
-
     print()
     return csv_path
 
@@ -363,10 +346,8 @@ async def run_session(
         await asyncio.sleep(0.3)
         await _start_notify_retry(client, data_char, receiver.on_data, "Data")
 
-        print(f"ACK ativo: Control ({control_char.uuid})")
-        print(f"Sessoes CSV em: {out_dir.resolve()}")
-        print("Pronto. No device: calibre -> grave -> pare (repita quantas vezes quiser).")
-        print("Ctrl+C para encerrar.\n")
+        print(f"Sessoes em: {out_dir.resolve()}")
+        print("No device: calibre -> grave -> pare (repita). Ctrl+C para sair.\n")
 
         try:
             while client.is_connected:
@@ -381,7 +362,6 @@ async def run_session(
                     await _save_one_xfer(receiver, store, also_save_bin)
                 else:
                     print("Sessao descartada (transferencia incompleta).\n")
-
                 receiver.reset_between_xfers()
         finally:
             ack_task.cancel()
@@ -392,29 +372,20 @@ async def run_session(
 
 
 async def amain() -> None:
-    parser = argparse.ArgumentParser(description="Receptor BLE — firmware PBL-Run-C3")
-    parser.add_argument("--name", default=DEVICE_NAME, help="Nome GAP do device")
-    parser.add_argument("--address", default=None, help="Endereco BLE (pula scan)")
-    parser.add_argument("--scan-timeout", type=float, default=15.0, help="Timeout do scan (s)")
+    parser = argparse.ArgumentParser(description="Receptor BLE PBL-Run-C3")
+    parser.add_argument("--name", default=DEVICE_NAME)
+    parser.add_argument("--address", default=None, help="MAC BLE (pula scan)")
+    parser.add_argument("--scan-timeout", type=float, default=15.0)
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("ble_sessions"),
+        default=Path("data/sessions"),
         help="Pasta para run_001.csv, run_002.csv, ...",
     )
-    parser.add_argument(
-        "--also-save-bin",
-        action="store_true",
-        help="Salva tambem .bin bruto ao lado de cada CSV",
-    )
+    parser.add_argument("--also-save-bin", action="store_true")
     args = parser.parse_args()
 
-    if args.address:
-        target: object = args.address
-        print(f"Usando endereco: {args.address}")
-    else:
-        target = await find_device(args.name, args.scan_timeout)
-
+    target = args.address if args.address else await find_device(args.name, args.scan_timeout)
     await run_session(target, args.out_dir, args.also_save_bin)
 
 

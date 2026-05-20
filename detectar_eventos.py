@@ -5,7 +5,7 @@ Detecta eventos de marcha/corrida a partir de arquivos .csv do receptor serial
 ou .bin original do firmware.
 
 Entrada suportada:
-    - .csv com schema gerado por receive_esp32_com10_to_csv.py
+    - .csv com schema gerado por receive_ble.py / receive_serial.py
     - .bin original gravado no LittleFS
 
 Pipeline:
