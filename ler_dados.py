@@ -4,7 +4,7 @@ ler_dados.py
 Le arquivos de aquisição do MPU6050 em dois formatos:
 
 1) .bin original gravado pelo firmware no LittleFS
-2) .csv gerado pelo receptor serial receive_esp32_com10_to_csv.py
+2) .csv gerado por receive_ble.py ou receive_serial.py
 
 Schema CSV esperado:
     sample_index,t_ms,ax_raw,ay_raw,az_raw,gx_raw,gy_raw,gz_raw,
@@ -39,16 +39,16 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Constantes de sensibilidade — mantenha em sincronia com o firmware.
-ACCEL_SENSITIVITY_LSB_PER_G = 4096.0       # ±8 g
-GYRO_SENSITIVITY_LSB_PER_DPS = 32.8        # ±1000 °/s
-SAMPLE_RATE_HZ = 500.0
-
-# Formato binário original.
-HEADER_FMT = "<ffffffI"                   # 6 floats + uint32 valid/padding
-HEADER_SIZE = struct.calcsize(HEADER_FMT)
-SAMPLE_FMT = "<Ihhhhhh"                   # uint32 + 6 int16
-SAMPLE_SIZE = struct.calcsize(SAMPLE_FMT)
+from pbl_data.format import (
+    ACCEL_SENSITIVITY_LSB_PER_G,
+    CSV_REQUIRED_COLUMNS,
+    GYRO_SENSITIVITY_LSB_PER_DPS,
+    HEADER_FMT,
+    HEADER_SIZE,
+    SAMPLE_FMT,
+    SAMPLE_RATE_HZ,
+    SAMPLE_SIZE,
+)
 
 SAMPLE_DTYPE = np.dtype([
     ("t_ms", "<u4"),
@@ -56,14 +56,7 @@ SAMPLE_DTYPE = np.dtype([
     ("gx", "<i2"), ("gy", "<i2"), ("gz", "<i2"),
 ])
 
-CSV_REQUIRED_COLUMNS = {
-    "t_ms",
-    "ax_raw", "ay_raw", "az_raw",
-    "gx_raw", "gy_raw", "gz_raw",
-    "calib_gx_bias_lsb", "calib_gy_bias_lsb", "calib_gz_bias_lsb",
-    "calib_g_T_x_lsb", "calib_g_T_y_lsb", "calib_g_T_z_lsb",
-    "calib_valid",
-}
+CSV_REQUIRED_COLUMNS = set(CSV_REQUIRED_COLUMNS)
 
 
 def _parse_bool(value: Any) -> bool:

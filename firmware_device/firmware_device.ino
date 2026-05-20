@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Etapa 11 — Máquina de estados + BLE (NimBLE) + LED RGB PWM
+ * Etapa 11 — Aquisicao wireless (BLE) + LED RGB PWM  [release etapa-11-ble]
  * Placa: ESP32-C3 Super Mini (Arduino-ESP32 core, "ESP32C3 Dev Module")
  *
  * Dependência: biblioteca "NimBLE-Arduino" (h2zero) no Gerenciador de Bibliotecas.
