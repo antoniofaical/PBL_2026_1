@@ -11,8 +11,8 @@ venv/
 env/
 
 # Dados gerados (sessoes de corrida)
-data/sessions/*.csv
 data/sessions/*.bin
+data/sessions/.gitkeep
 ble_sessions/
 last_run*.csv
 last_run*.bin
