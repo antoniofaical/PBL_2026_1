@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}{{ run.run_id }} — Kinexa{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+  <a href="/runs">← Coletas</a>
+</div>
+
+<h1 class="page-title">Detalhes da coleta</h1>
+
+{% if updated %}
+<p class="flash-ok">Alterações salvas com sucesso.</p>
+{% endif %}
+
+<section class="card">
+  <h2>Metadados</h2>
+  <dl class="meta-grid">
+    <dt>Run ID</dt>
+    <dd><code>{{ run.run_id }}</code></dd>
+
+    <dt>Atleta</dt>
+    <dd>{{ run.athlete }}</dd>
+
+    <dt>Atividade</dt>
+    <dd>{{ run.activity | activity_label }}</dd>
+
+    <dt>Ambiente</dt>
+    <dd>{{ run.environment | environment_label }}</dd>
+
+    <dt>Data/Hora</dt>
+    <dd>{{ run.datetime }}</dd>
+
+    <dt>Device ID</dt>
+    <dd><code>{{ run.device_id }}</code></dd>
+
+    <dt>Amostras</dt>
+    <dd>{{ run.sample_count or "—" }}</dd>
+
+    <dt>Registrado em</dt>
+    <dd>{{ run.created_at }}</dd>
+
+    {% if run.notes %}
+    <dt>Notas</dt>
+    <dd>{{ run.notes }}</dd>
+    {% endif %}
+  </dl>
+
+  <div class="actions actions-row">
+    <a href="/api/runs/{{ run.run_id }}/csv" class="btn">Baixar CSV</a>
+    <a href="/runs/{{ run.run_id }}/edit" class="btn btn-outline">Editar</a>
+    <form method="post" action="/runs/{{ run.run_id }}/delete" class="inline-form"
+          onsubmit="return confirm('Excluir esta coleta permanentemente? O CSV também será removido.');">
+      <button type="submit" class="btn btn-danger">Excluir</button>
+    </form>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Eventos / Marcadores</h2>
+  {% if run.events %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Timestamp (ms)</th>
+        <th>Descrição</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for event in run.events %}
+      <tr>
+        <td>{{ event.timestamp_ms }}</td>
+        <td>{{ event.description or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">Nenhum evento registrado.</p>
+  {% endif %}
+</section>
+
+{% if csv_preview %}
+<section class="card">
+  <h2>Preview do CSV</h2>
+  <p class="hint">Primeiras linhas do arquivo (cabeçalho + até 10 amostras).</p>
+  <pre class="csv-preview">{% for line in csv_preview %}{{ line }}
+{% endfor %}</pre>
+</section>
+{% endif %}
+{% endblock %}

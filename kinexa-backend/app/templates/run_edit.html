@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Editar {{ run.run_id }} — Kinexa{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+  <a href="/runs/{{ run.run_id }}">← Detalhes da coleta</a>
+</div>
+
+<h1 class="page-title">Editar coleta</h1>
+
+{% if error %}
+<p class="flash-error">{{ error }}</p>
+{% endif %}
+
+<section class="card">
+  <h2>Dados coletados (somente leitura)</h2>
+  <dl class="meta-grid">
+    <dt>Run ID</dt>
+    <dd><code>{{ run.run_id }}</code></dd>
+    <dt>Amostras</dt>
+    <dd>{{ run.sample_count or "—" }}</dd>
+    <dt>CSV</dt>
+    <dd><a href="/api/runs/{{ run.run_id }}/csv">Baixar arquivo</a></dd>
+  </dl>
+  <p class="hint">Os dados brutos do sensor não podem ser alterados por aqui.</p>
+</section>
+
+<section class="card">
+  <h2>Metadados e eventos</h2>
+  <form method="post" action="/runs/{{ run.run_id }}/edit" class="edit-form">
+    <div class="form-field">
+      <label for="athlete">Atleta</label>
+      <input type="text" id="athlete" name="athlete" required maxlength="256"
+             value="{{ form.athlete if form else run.athlete }}">
+    </div>
+
+    <div class="form-row">
+      <div class="form-field">
+        <label for="activity">Atividade</label>
+        <select id="activity" name="activity" required>
+          {% for value, label in activity_labels.items() %}
+          <option value="{{ value }}"
+            {% if (form.activity if form else run.activity) == value %}selected{% endif %}>
+            {{ label }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="environment">Ambiente</label>
+        <select id="environment" name="environment" required>
+          {% for value, label in environment_labels.items() %}
+          <option value="{{ value }}"
+            {% if (form.environment if form else run.environment) == value %}selected{% endif %}>
+            {{ label }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="form-field">
+      <label for="datetime">Data/Hora (ISO 8601)</label>
+      <input type="text" id="datetime" name="datetime" required
+             value="{{ form.datetime if form else run.datetime }}">
+    </div>
+
+    <div class="form-field">
+      <label for="device_id">Device ID</label>
+      <input type="text" id="device_id" name="device_id" required maxlength="128"
+             value="{{ form.device_id if form else run.device_id }}">
+    </div>
+
+    <div class="form-field">
+      <label for="notes">Notas</label>
+      <textarea id="notes" name="notes" rows="3">{{ form.notes if form else (run.notes or "") }}</textarea>
+    </div>
+
+    <div class="form-field">
+      <label for="events_text">Eventos / marcadores</label>
+      <textarea id="events_text" name="events_text" rows="8" class="mono">{{ events_text }}</textarea>
+      <p class="hint">Um evento por linha: <code>timestamp_ms|descrição</code> (ex.: <code>5000|Esteira 8 km/h</code>)</p>
+    </div>
+
+    <div class="actions actions-form">
+      <button type="submit" class="btn">Salvar alterações</button>
+      <a href="/runs/{{ run.run_id }}" class="btn btn-outline">Cancelar</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

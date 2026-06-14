@@ -32,6 +32,7 @@ CSV_REQUIRED_COLUMNS = frozenset({
 })
 
 # Protocolo de transferência (serial / BLE status + data)
+XFER_START_LINE = "XFER:START"
 XFER_BEGIN_MARKER = "===BEGIN_LAST_RUN_BIN==="
 XFER_END_MARKER = "===END_LAST_RUN_BIN==="
 XFER_OK_LINE = "XFER: OK"

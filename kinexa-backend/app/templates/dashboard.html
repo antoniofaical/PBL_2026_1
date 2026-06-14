@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — Kinexa{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Dashboard</h1>
+
+{% if seeded %}
+<p class="flash-ok">Coleta simulada criada: <code>{{ seeded }}</code></p>
+{% endif %}
+
+<section class="card card-dev">
+  <div class="card-header">
+    <h2>Dev (temporário)</h2>
+  </div>
+  <p class="hint">Insere uma coleta de exemplo no banco com CSV e eventos fictícios.</p>
+  <form method="post" action="/dev/seed-run">
+    <button type="submit" class="btn">+ Adicionar coleta simulada</button>
+  </form>
+</section>
+
+<div class="stats-grid">
+  <div class="card stat-card">
+    <span class="stat-value">{{ total_runs }}</span>
+    <span class="stat-label">Coletas</span>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-value">{{ total_athletes }}</span>
+    <span class="stat-label">Atletas distintos</span>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-value">{{ total_events }}</span>
+    <span class="stat-label">Eventos</span>
+  </div>
+</div>
+
+<section class="card">
+  <div class="card-header">
+    <h2>Últimas coletas</h2>
+    <a href="/runs" class="btn btn-outline">Ver todas</a>
+  </div>
+
+  {% if recent_runs %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Atleta</th>
+        <th>Atividade</th>
+        <th>Data/Hora</th>
+        <th>Amostras</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in recent_runs %}
+      <tr>
+        <td><code>{{ run.run_id | abbreviate_run_id }}</code></td>
+        <td>{{ run.athlete }}</td>
+        <td>{{ run.activity | activity_label }}</td>
+        <td>{{ run.datetime }}</td>
+        <td>{{ run.sample_count or "—" }}</td>
+        <td><a href="/runs/{{ run.run_id }}" class="btn btn-sm">Detalhes</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">Nenhuma coleta registrada ainda.</p>
+  {% endif %}
+</section>
+{% endblock %}

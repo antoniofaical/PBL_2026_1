@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Coletas — Kinexa{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Coletas</h1>
+
+{% if deleted %}
+<p class="flash-ok">Coleta excluída com sucesso.</p>
+{% endif %}
+
+<section class="card">
+  {% if runs %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Atleta</th>
+          <th>Atividade</th>
+          <th>Ambiente</th>
+          <th>Data/Hora</th>
+          <th>Device</th>
+          <th>Amostras</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td><code title="{{ run.run_id }}">{{ run.run_id | abbreviate_run_id }}</code></td>
+          <td>{{ run.athlete }}</td>
+          <td>{{ run.activity | activity_label }}</td>
+          <td>{{ run.environment | environment_label }}</td>
+          <td>{{ run.datetime }}</td>
+          <td><code>{{ run.device_id }}</code></td>
+          <td>{{ run.sample_count or "—" }}</td>
+          <td><a href="/runs/{{ run.run_id }}" class="btn btn-sm">Detalhes</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">Nenhuma coleta registrada ainda.</p>
+  {% endif %}
+</section>
+{% endblock %}

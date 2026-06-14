@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Kinexa{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="/" class="logo">KINEXA</a>
+      <nav>
+        <a href="/" class="nav-link">Dashboard</a>
+        <a href="/runs" class="nav-link">Coletas</a>
+        <a href="/docs" class="nav-link">API</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>Kinexa — coleta biomecânica ESP32 + MPU6050</span>
+    </div>
+  </footer>
+</body>
+</html>

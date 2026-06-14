@@ -36,9 +36,9 @@ CHAR_DATA_UUID = "0000ff02-0000-1000-8000-00805f9b34fb"
 CHAR_CONTROL_UUID = "0000ff03-0000-1000-8000-00805f9b34fb"
 ACK_BYTE = b"\x01"
 
-# Alinhar com firmware (XFER_CHUNK_SIZE * 8 se firmware usar burst de 8)
+# Alinhar com firmware (XFER_BYTES_PER_ACK = XFER_CHUNK_SIZE * 4)
 XFER_CHUNK_SIZE = 244
-BYTES_PER_ACK = XFER_CHUNK_SIZE * 8
+BYTES_PER_ACK = XFER_CHUNK_SIZE * 4
 DRAIN_AFTER_FOOTER_S = 20.0
 
 NotifyCallback = Callable[[BleakGATTCharacteristic, bytearray], None]
@@ -204,6 +204,9 @@ class BleRunReceiver:
             return
 
         print(f"[STATUS] {text}")
+
+        if text == "XFER:START":
+            return
 
         if text == "===BEGIN_LAST_RUN_BIN===":
             self.begin_new_transfer()

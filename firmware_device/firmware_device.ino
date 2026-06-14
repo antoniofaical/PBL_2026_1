@@ -1,21 +1,22 @@
 /**
  * ============================================================================
- * Etapa 11 — Aquisicao wireless (BLE) + LED RGB PWM  [release etapa-11-ble]
+ * Kinexa firmware — ESP32-C3 + MPU6050 + BLE (app Android)
  * Placa: ESP32-C3 Super Mini (Arduino-ESP32 core, "ESP32C3 Dev Module")
  *
  * Dependência: biblioteca "NimBLE-Arduino" (h2zero) no Gerenciador de Bibliotecas.
  *
- * Pipeline:
- *   BOOT -> BLE advertising -> IDLE (azul)
- *        -> [central conecta] notify: "Device conectado. Esperando...."
- *        -> [btn] -> CALIB (rosa)  notify: "Calibrando..."
- *        -> READY (verde)          notify: "Device Calibrado! Pronto para gravar..."
- *        -> [btn] -> RECORDING (amarelo) notify: "GRAVANDO..."
- *        -> [btn] -> SAVE_XFER (roxo)      notify: "Gravação finalizada! Transmitindo..."
- *        -> xfer BLE -> FLASH_OK (verde 1s) -> IDLE
+ * Máquina de estados (controle principal via BLE; botão = emergência):
+ *
+ *   BOOT -> S_NEEDS_CALIBRATION
+ *        -> [app: CALIBRATE] -> S_CALIBRATING -> S_READY
+ *        -> [app: START]      -> S_RECORDING
+ *        -> [app: STOP]       -> S_TRANSFER -> S_READY
+ *
+ * Calibração é on demand: no boot o atleta pode não estar parado/posicionado.
+ * Metadados, eventos e upload HTTP são responsabilidade do app Android.
  *
  * Pinagem (hardware real):
- *   GPIO 0 -> botão (INPUT_PULLUP, LOW = pressionado)
+ *   GPIO 0 -> botão (INPUT_PULLUP, LOW = pressionado) — apenas emergência
  *   GPIO 7 -> LED R   (PWM, cátodo comum no GND)
  *   GPIO 6 -> LED G
  *   GPIO 5 -> LED B
@@ -26,11 +27,16 @@
  *   Serviço  4fafc201-1fb5-459e-8fcc-c5c9c331914b
  *   Status   beb5483e-36e1-4688-b7f5-ea07361b26a8  (READ + NOTIFY) — linhas ASCII
  *   Data     0000ff02-0000-1000-8000-00805f9b34fb  (NOTIFY) — payload binário
- *   Control  0000ff03-0000-1000-8000-00805f9b34fb  (WRITE) — ACK 0x01 por chunk recebido
+ *   Control  0000ff03-0000-1000-8000-00805f9b34fb  (WRITE) — ACK 0x01 ou comandos ASCII
  *
- * Protocolo de transferência (igual à etapa 10 serial, via Status + Data):
- *   ===BEGIN_LAST_RUN_BIN=== / PATH / SIZE / DATA_BEGIN
- *   <SIZE bytes binários em chunks na characteristic Data>
+ * Comandos BLE (Control characteristic, ASCII):
+ *   STATUS | PING | CALIBRATE | START | STOP | ABORT
+ *
+ * ACK de transferência: byte único 0x01 (não confundir com comandos ASCII).
+ *
+ * Protocolo de transferência binária (Status + Data):
+ *   XFER:START / ===BEGIN_LAST_RUN_BIN=== / PATH / SIZE / DATA_BEGIN
+ *   <bytes binários em chunks na characteristic Data>
  *   DATA_END / ===END_LAST_RUN_BIN=== / XFER: OK
  * ============================================================================
  */
@@ -39,7 +45,14 @@
 #include <Wire.h>
 #include <LittleFS.h>
 #include <cstdarg>
+#include <cstring>
 #include <NimBLEDevice.h>
+
+// ---------------------------------------------------------------------------
+// Identidade do device
+// ---------------------------------------------------------------------------
+static constexpr char DEVICE_ID[]  = "KINEXA_01";
+static constexpr char FW_VERSION[] = "1.0.4";
 
 // ---------------------------------------------------------------------------
 // Pinos
@@ -50,6 +63,10 @@ static constexpr uint8_t PIN_LED_G  = 6;
 static constexpr uint8_t PIN_LED_B  = 5;
 static constexpr uint8_t PIN_SDA    = 8;
 static constexpr uint8_t PIN_SCL    = 9;
+
+// Botão de emergência (não controla fluxo normal)
+static constexpr uint32_t BTN_EMERGENCY_MS     = 3000;
+static constexpr uint32_t BTN_FORCE_RECALIB_MS = 8000;
 
 // ---------------------------------------------------------------------------
 // MPU6050
@@ -66,40 +83,40 @@ static constexpr uint8_t REG_ACCEL_XOUT_H   = 0x3B;
 // Aquisição
 // ---------------------------------------------------------------------------
 static constexpr uint32_t SAMPLE_PERIOD_US = 2000;   // 500 Hz
-static constexpr uint16_t CALIB_SAMPLES      = 1500;   // ~3 s
-static constexpr uint16_t BUFFER_SIZE        = 200;
+static constexpr uint16_t CALIB_SAMPLES   = 1500;   // ~3 s
+static constexpr uint16_t BUFFER_SIZE     = 200;
 
 // ---------------------------------------------------------------------------
 // BLE UUIDs
 // ---------------------------------------------------------------------------
-static constexpr char BLE_DEVICE_NAME[] = "PBL-Run-C3";
-static constexpr char SERVICE_UUID[]    = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+static constexpr char SERVICE_UUID[]      = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 static constexpr char CHAR_STATUS_UUID[]  = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 static constexpr char CHAR_DATA_UUID[]    = "0000ff02-0000-1000-8000-00805f9b34fb";
 static constexpr char CHAR_CONTROL_UUID[] = "0000ff03-0000-1000-8000-00805f9b34fb";
 
-// Deve coincidir com BYTES_PER_ACK em receive_ble.py (244 * 8)
 static constexpr size_t XFER_CHUNK_SIZE = 244;
-static constexpr size_t XFER_BYTES_PER_ACK = XFER_CHUNK_SIZE * 8;
+static constexpr size_t XFER_BYTES_PER_ACK = XFER_CHUNK_SIZE * 4;
 static constexpr uint32_t XFER_ACK_TIMEOUT_MS = 20000;
 static constexpr uint32_t XFER_POST_DRAIN_MS = 400;
 static constexpr uint32_t XFER_INTER_CHUNK_DELAY_MS = 3;
+static constexpr uint32_t XFER_HDR_LINE_DELAY_MS = 30;
+static constexpr uint32_t XFER_PRE_PAYLOAD_DELAY_MS = 80;
 
 // ---------------------------------------------------------------------------
 // Estados da FSM
 // ---------------------------------------------------------------------------
 enum State : uint8_t {
-  S_IDLE,
-  S_CALIB,
+  S_NEEDS_CALIBRATION,
+  S_CALIBRATING,
   S_READY,
   S_RECORDING,
-  S_SAVE_XFER,
-  S_FLASH_OK,
-  S_FLASH_FAIL,
+  S_TRANSFER,
+  S_ERROR,
 };
 
 enum XferPhase : uint8_t {
   XFER_OPEN_FILE,
+  XFER_HDR_START,
   XFER_HDR_BEGIN,
   XFER_HDR_PATH,
   XFER_HDR_SIZE,
@@ -110,6 +127,7 @@ enum XferPhase : uint8_t {
   XFER_FTR_END_MARKER,
   XFER_FTR_OK,
   XFER_FINISH,
+  XFER_WAIT,
 };
 
 // ---------------------------------------------------------------------------
@@ -141,13 +159,15 @@ struct CalibAccum {
 // ---------------------------------------------------------------------------
 // Estado global
 // ---------------------------------------------------------------------------
-static State state = S_IDLE;
+static State state = S_NEEDS_CALIBRATION;
 
 static Sample buf[BUFFER_SIZE];
 static volatile uint16_t buf_w = 0;
 
 static File rec_file;
 static const char* REC_PATH = "/last_run.bin";
+
+static uint32_t t_next_sample_us = 0;
 
 // BLE
 static NimBLEServer* bleServer = nullptr;
@@ -160,10 +180,8 @@ static volatile bool bleDataSubscribed = false;
 static volatile bool bleAbortXfer = false;
 static volatile bool bleXferAck = false;
 
-// Calibração não bloqueante
 static CalibAccum calibAccum;
 
-// Transferência não bloqueante
 static XferPhase xferPhase = XFER_OPEN_FILE;
 static File xferFile;
 static size_t xferTotalBytes = 0;
@@ -172,10 +190,14 @@ static uint8_t xferChunk[XFER_CHUNK_SIZE];
 static bool xferAwaitingAck = false;
 static uint32_t xferAckDeadlineMs = 0;
 static uint32_t xferPostDrainUntilMs = 0;
+static uint32_t xferWaitUntilMs = 0;
+static XferPhase xferAfterWaitPhase = XFER_HDR_BEGIN;
 
-// LED PWM
+// LED PWM + blink
 static constexpr uint32_t LEDC_FREQ_HZ = 5000;
 static constexpr uint8_t LEDC_RES_BITS = 8;
+static uint32_t ledBlinkLastMs = 0;
+static bool ledBlinkOn = false;
 
 // ---------------------------------------------------------------------------
 // Protótipos
@@ -185,63 +207,76 @@ static void logSerialf(const char* fmt, ...);
 
 static void ledInit();
 static void ledSetColor(const Rgb& c);
-static void ledApplyState(State s);
+static Rgb ledBlinkOnColor(State s);
+static void ledArmBlink(State s);
+static void ledApplySolid(State s);
+static void ledTick();
 
 static void mpuWrite(uint8_t reg, uint8_t val);
 static bool mpuReadBurst(int16_t& ax, int16_t& ay, int16_t& az,
                          int16_t& gx, int16_t& gy, int16_t& gz);
 static bool mpuInit();
+static bool mpuInitWithRetry(uint8_t attempts = 5);
 
 static void bleInit();
 static bool bleNotifyStatus(const char* msg);
 static bool bleNotifyData(const uint8_t* data, size_t len);
 static bool bleIsReadyForXfer();
 
+static const char* stateTag(State s);
+static void notifyStatus(const char* msg);
+static void sendStatusResponse();
+static void handleBleCommand(const char* raw);
+static void normalizeCommand(char* cmd, size_t cap);
+
 static void calibReset();
 static bool calibTick();
 static void calibFinalize();
+static void startCalibration();
 
 static void acquireOne(uint32_t now_ms);
-static bool buttonPressed();
+static void buttonTick();
 static bool startRecording();
 static void stopRecording();
+static void startRecordingCmd();
+static void stopRecordingCmd();
+static void handleAbort();
+static void forceRecalibration();
 
 static void xferReset();
 static void xferFail();
 static void xferTick();
 static bool xferOpenFile();
 static bool xferSendPayloadChunk();
+static void startTransfer();
 
-static void transitionTo(State next);
+static void setState(State next);
 static void onStateEnter(State entered, State previous);
 
 // ---------------------------------------------------------------------------
-// Logging (Serial apenas para desenvolvimento)
+// Logging
 // ---------------------------------------------------------------------------
 static void logSerial(const char* msg) {
   Serial.println(msg);
 }
 
 static void logSerialf(const char* fmt, ...) {
-  char buf[160];
+  char line[160];
   va_list args;
   va_start(args, fmt);
-  vsnprintf(buf, sizeof(buf), fmt, args);
+  vsnprintf(line, sizeof(line), fmt, args);
   va_end(args);
-  Serial.println(buf);
+  Serial.println(line);
 }
 
 // ---------------------------------------------------------------------------
-// LED RGB — PWM
+// LED RGB — PWM + pisca por estado
 // ---------------------------------------------------------------------------
-static const Rgb LED_IDLE      = {0, 0, 255};
-static const Rgb LED_CALIB     = {255, 20, 100};   // rosa
-static const Rgb LED_READY     = {0, 255, 0};
-static const Rgb LED_RECORDING = {255, 255, 0};    // amarelo
-static const Rgb LED_SAVE      = {140, 0, 255};    // roxo (B > R)
-static const Rgb LED_OK        = {0, 255, 0};
-static const Rgb LED_FAIL      = {255, 0, 0};
 static const Rgb LED_OFF       = {0, 0, 0};
+static const Rgb LED_BLUE      = {0, 0, 255};
+static const Rgb LED_YELLOW    = {255, 255, 0};
+static const Rgb LED_GREEN     = {0, 255, 0};
+static const Rgb LED_RED       = {255, 0, 0};
 
 static void ledInit() {
   ledcAttach(PIN_LED_R, LEDC_FREQ_HZ, LEDC_RES_BITS);
@@ -256,15 +291,62 @@ static void ledSetColor(const Rgb& c) {
   ledcWrite(PIN_LED_B, c.b);
 }
 
-static void ledApplyState(State s) {
+static Rgb ledBlinkOnColor(State s) {
   switch (s) {
-    case S_IDLE:       ledSetColor(LED_IDLE); break;
-    case S_CALIB:      ledSetColor(LED_CALIB); break;
-    case S_READY:      ledSetColor(LED_READY); break;
-    case S_RECORDING:  ledSetColor(LED_RECORDING); break;
-    case S_SAVE_XFER:  ledSetColor(LED_SAVE); break;
-    case S_FLASH_OK:   ledSetColor(LED_OK); break;
-    case S_FLASH_FAIL: ledSetColor(LED_FAIL); break;
+    case S_NEEDS_CALIBRATION:
+    case S_CALIBRATING:
+    case S_TRANSFER:
+      return LED_BLUE;
+    case S_ERROR:
+      return LED_RED;
+    default:
+      return LED_OFF;
+  }
+}
+
+static void ledArmBlink(State s) {
+  ledBlinkLastMs = millis();
+  ledBlinkOn = true;
+  ledSetColor(ledBlinkOnColor(s));
+}
+
+static void ledApplySolid(State s) {
+  switch (s) {
+    case S_READY:      ledSetColor(LED_GREEN); break;
+    case S_RECORDING:  ledSetColor(LED_YELLOW); break;
+    default:           break;
+  }
+}
+
+static void ledTick() {
+  const uint32_t now = millis();
+  uint32_t period = 0;
+
+  switch (state) {
+    case S_NEEDS_CALIBRATION:
+      period = 800;
+      break;
+    case S_CALIBRATING:
+      period = 200;
+      break;
+    case S_TRANSFER:
+      period = 400;
+      break;
+    case S_ERROR:
+      period = 300;
+      break;
+    case S_READY:
+    case S_RECORDING:
+      ledApplySolid(state);
+      return;
+    default:
+      return;
+  }
+
+  if (now - ledBlinkLastMs >= period) {
+    ledBlinkLastMs = now;
+    ledBlinkOn = !ledBlinkOn;
+    ledSetColor(ledBlinkOn ? ledBlinkOnColor(state) : LED_OFF);
   }
 }
 
@@ -294,7 +376,7 @@ static bool mpuReadBurst(int16_t& ax, int16_t& ay, int16_t& az,
   ax = rd16();
   ay = rd16();
   az = rd16();
-  rd16();  // temperatura — descartada
+  rd16();
   gx = rd16();
   gy = rd16();
   gz = rd16();
@@ -305,16 +387,25 @@ static bool mpuInit() {
   mpuWrite(REG_PWR_MGMT_1, 0x01);
   delay(50);
 
-  mpuWrite(REG_SMPLRT_DIV, 1);       // 500 Hz
-  mpuWrite(REG_CONFIG, 0x03);        // DLPF ~44 Hz
-  mpuWrite(REG_GYRO_CONFIG, 0x10);   // ±1000 °/s
-  mpuWrite(REG_ACCEL_CONFIG, 0x10);  // ±8 g
+  mpuWrite(REG_SMPLRT_DIV, 1);
+  mpuWrite(REG_CONFIG, 0x03);
+  mpuWrite(REG_GYRO_CONFIG, 0x10);
+  mpuWrite(REG_ACCEL_CONFIG, 0x10);
 
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(0x75);
   if (Wire.endTransmission(false) != 0) return false;
   Wire.requestFrom(MPU_ADDR, (uint8_t)1, (uint8_t)true);
   return Wire.available() && Wire.read() == 0x68;
+}
+
+static bool mpuInitWithRetry(uint8_t attempts) {
+  for (uint8_t i = 0; i < attempts; i++) {
+    if (mpuInit()) return true;
+    logSerialf("MPU: init retry %u/%u", (unsigned)(i + 1), (unsigned)attempts);
+    delay(100);
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -327,10 +418,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks {
     bleConnected = true;
     bleAbortXfer = false;
     logSerial("BLE: connected");
-
-    if (state == S_IDLE) {
-      bleNotifyStatus("Device conectado. Esperando....");
-    }
+    notifyStatus(stateTag(state));
   }
 
   void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
@@ -341,7 +429,7 @@ class BleServerCallbacks : public NimBLEServerCallbacks {
     bleDataSubscribed = false;
     logSerial("BLE: disconnected");
 
-    if (state == S_SAVE_XFER) {
+    if (state == S_TRANSFER) {
       bleAbortXfer = true;
     }
 
@@ -352,9 +440,22 @@ class BleServerCallbacks : public NimBLEServerCallbacks {
 
 class BleControlCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& connInfo) override {
-    (void)chr;
     (void)connInfo;
-    bleXferAck = true;
+    const std::string& value = chr->getValue();
+
+    // ACK binário da transferência (1 byte 0x01)
+    if (value.size() == 1 && (uint8_t)value[0] == 0x01) {
+      bleXferAck = true;
+      return;
+    }
+
+    if (value.empty()) return;
+
+    char cmd[48];
+    const size_t n = value.size() < sizeof(cmd) - 1 ? value.size() : sizeof(cmd) - 1;
+    memcpy(cmd, value.data(), n);
+    cmd[n] = '\0';
+    handleBleCommand(cmd);
   }
 };
 
@@ -378,7 +479,6 @@ static BleControlCallbacks bleControlCb;
 
 static bool bleNotifyStatus(const char* msg) {
   if (!bleConnected || bleCharStatus == nullptr) return false;
-
   const size_t len = strlen(msg);
   bleCharStatus->setValue((uint8_t*)msg, len);
   return bleCharStatus->notify();
@@ -386,7 +486,6 @@ static bool bleNotifyStatus(const char* msg) {
 
 static bool bleNotifyData(const uint8_t* data, size_t len) {
   if (!bleConnected || bleCharData == nullptr || len == 0) return false;
-
   bleCharData->setValue(const_cast<uint8_t*>(data), len);
   return bleCharData->notify();
 }
@@ -396,7 +495,7 @@ static bool bleIsReadyForXfer() {
 }
 
 static void bleInit() {
-  NimBLEDevice::init(BLE_DEVICE_NAME);
+  NimBLEDevice::init(DEVICE_ID);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
   bleServer = NimBLEDevice::createServer();
@@ -417,22 +516,139 @@ static void bleInit() {
 
   bleCharControl = service->createCharacteristic(
       CHAR_CONTROL_UUID,
-      NIMBLE_PROPERTY::WRITE);
+      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   bleCharControl->setCallbacks(&bleControlCb);
 
   service->start();
 
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-  advertising->setName(BLE_DEVICE_NAME);
+  advertising->setName(DEVICE_ID);
   advertising->addServiceUUID(SERVICE_UUID);
   advertising->enableScanResponse(true);
   advertising->start();
 
-  logSerial("BLE: advertising started");
+  logSerialf("BLE: advertising as %s", DEVICE_ID);
 }
 
 // ---------------------------------------------------------------------------
-// Calibração estática — não bloqueante
+// Protocolo BLE — comandos e status
+// ---------------------------------------------------------------------------
+static const char* stateTag(State s) {
+  switch (s) {
+    case S_NEEDS_CALIBRATION: return "STATE:NEEDS_CALIBRATION";
+    case S_CALIBRATING:       return "STATE:CALIBRATING";
+    case S_READY:             return "STATE:READY";
+    case S_RECORDING:         return "STATE:RECORDING";
+    case S_TRANSFER:          return "STATE:TRANSFER";
+    case S_ERROR:             return "STATE:ERROR";
+    default:                  return "STATE:UNKNOWN";
+  }
+}
+
+static void notifyStatus(const char* msg) {
+  logSerialf("NOTIFY: %s", msg);
+  bleNotifyStatus(msg);
+}
+
+static void sendStatusResponse() {
+  notifyStatus(stateTag(state));
+
+  char line[40];
+  snprintf(line, sizeof(line), "FW:%s", FW_VERSION);
+  notifyStatus(line);
+
+  snprintf(line, sizeof(line), "DEVICE:%s", DEVICE_ID);
+  notifyStatus(line);
+
+  notifyStatus(calib.valid ? "CALIB:OK" : "CALIB:INVALID");
+}
+
+static void normalizeCommand(char* cmd, size_t cap) {
+  if (cap == 0) return;
+
+  size_t start = 0;
+  while (cmd[start] && (cmd[start] == ' ' || cmd[start] == '\t' ||
+                         cmd[start] == '\r' || cmd[start] == '\n')) {
+    start++;
+  }
+
+  size_t i = 0;
+  for (size_t j = start; cmd[j] && i < cap - 1; j++) {
+    char c = cmd[j];
+    if (c == '\r' || c == '\n') break;
+    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+    cmd[i++] = c;
+  }
+  cmd[i] = '\0';
+
+  while (i > 0 && (cmd[i - 1] == ' ' || cmd[i - 1] == '\t')) {
+    cmd[--i] = '\0';
+  }
+}
+
+static void handleBleCommand(const char* raw) {
+  char cmd[48];
+  strncpy(cmd, raw, sizeof(cmd) - 1);
+  cmd[sizeof(cmd) - 1] = '\0';
+  normalizeCommand(cmd, sizeof(cmd));
+
+  if (cmd[0] == '\0') return;
+
+  logSerialf("BLE CMD: %s", cmd);
+
+  if (strcmp(cmd, "STATUS") == 0) {
+    sendStatusResponse();
+    return;
+  }
+
+  if (strcmp(cmd, "PING") == 0) {
+    notifyStatus("PONG");
+    return;
+  }
+
+  if (strcmp(cmd, "CALIBRATE") == 0) {
+    startCalibration();
+    return;
+  }
+
+  if (strcmp(cmd, "START") == 0) {
+    startRecordingCmd();
+    return;
+  }
+
+  if (strcmp(cmd, "STOP") == 0) {
+    stopRecordingCmd();
+    return;
+  }
+
+  if (strcmp(cmd, "XFER") == 0) {
+    if (state == S_TRANSFER) {
+      notifyStatus("XFER:ALREADY");
+      return;
+    }
+    if (state != S_READY) {
+      notifyStatus("ERROR:INVALID_STATE");
+      return;
+    }
+    if (!LittleFS.exists(REC_PATH)) {
+      notifyStatus("ERROR:NO_FILE");
+      return;
+    }
+    xferReset();
+    startTransfer();
+    return;
+  }
+
+  if (strcmp(cmd, "ABORT") == 0) {
+    handleAbort();
+    return;
+  }
+
+  notifyStatus("ERROR:UNKNOWN_COMMAND");
+}
+
+// ---------------------------------------------------------------------------
+// Calibração estática — não bloqueante, on demand via app
 // ---------------------------------------------------------------------------
 static void calibReset() {
   calibAccum = CalibAccum{};
@@ -487,6 +703,17 @@ static void calibFinalize() {
   logSerial("CALIB: OK");
 }
 
+static void startCalibration() {
+  if (state == S_RECORDING || state == S_TRANSFER) {
+    notifyStatus("ERROR:INVALID_STATE");
+    return;
+  }
+
+  calib.valid = false;
+  logSerial("CALIB: start requested by app");
+  setState(S_CALIBRATING);
+}
+
 // ---------------------------------------------------------------------------
 // Gravação
 // ---------------------------------------------------------------------------
@@ -508,23 +735,8 @@ static void acquireOne(uint32_t now_ms) {
       rec_file.write((const uint8_t*)buf, buf_w * sizeof(Sample));
     }
     buf_w = 0;
-    delay(0);  // alimenta stack BLE / watchdog durante I/O
+    delay(0);
   }
-}
-
-static bool buttonPressed() {
-  static int last_raw = HIGH;
-  static uint32_t t_last = 0;
-  const int raw = digitalRead(PIN_BUTTON);
-  const uint32_t now = millis();
-
-  if (raw == LOW && last_raw == HIGH && (now - t_last) > 80) {
-    t_last = now;
-    last_raw = raw;
-    return true;
-  }
-  if (raw == HIGH) last_raw = HIGH;
-  return false;
 }
 
 static bool startRecording() {
@@ -545,6 +757,140 @@ static void stopRecording() {
     rec_file.flush();
     rec_file.close();
   }
+  logSerial("REC: file closed");
+}
+
+static void startRecordingCmd() {
+  if (state != S_READY) {
+    notifyStatus("ERROR:INVALID_STATE");
+    return;
+  }
+  if (!calib.valid) {
+    notifyStatus("ERROR:NOT_CALIBRATED");
+    return;
+  }
+  if (!bleConnected) {
+    notifyStatus("ERROR:NO_BLE");
+    return;
+  }
+
+  if (startRecording()) {
+    t_next_sample_us = micros();
+    logSerial("REC: started");
+    notifyStatus("REC:STARTED");
+    setState(S_RECORDING);
+  } else {
+    logSerial("REC: failed to open file");
+    notifyStatus("ERROR:FILE_OPEN");
+    setState(S_ERROR);
+  }
+}
+
+static void stopRecordingCmd() {
+  if (state != S_RECORDING) {
+    notifyStatus("ERROR:NOT_RECORDING");
+    return;
+  }
+
+  stopRecording();
+  logSerial("REC: stopped by app");
+  notifyStatus("REC:STOPPED");
+  startTransfer();
+}
+
+static void handleAbort() {
+  if (state == S_RECORDING) {
+    stopRecording();
+    logSerial("REC: aborted");
+    notifyStatus("REC:ABORTED");
+    if (calib.valid) {
+      setState(S_READY);
+    } else {
+      setState(S_NEEDS_CALIBRATION);
+    }
+    return;
+  }
+
+  if (state == S_TRANSFER) {
+    bleAbortXfer = true;
+    xferReset();
+    logSerial("XFER: aborted by app");
+    notifyStatus("XFER:ABORTED");
+    if (calib.valid) {
+      setState(S_READY);
+    } else {
+      setState(S_NEEDS_CALIBRATION);
+    }
+    return;
+  }
+
+  sendStatusResponse();
+}
+
+static void forceRecalibration() {
+  logSerial("BUTTON: force recalibration");
+
+  if (state == S_RECORDING) {
+    stopRecording();
+    notifyStatus("REC:ABORTED");
+  } else if (state == S_TRANSFER) {
+    bleAbortXfer = true;
+    xferReset();
+    notifyStatus("XFER:ABORTED");
+  }
+
+  calib.valid = false;
+  notifyStatus("BUTTON:FORCE_RECALIBRATION");
+  setState(S_NEEDS_CALIBRATION);
+}
+
+// ---------------------------------------------------------------------------
+// Botão físico — apenas emergência
+// ---------------------------------------------------------------------------
+static void buttonTick() {
+  static bool was_pressed = false;
+  static uint32_t press_start_ms = 0;
+  static bool fired_emergency = false;
+  static bool fired_force_recal = false;
+
+  const bool pressed = digitalRead(PIN_BUTTON) == LOW;
+  const uint32_t now = millis();
+
+  if (pressed && !was_pressed) {
+    press_start_ms = now;
+    fired_emergency = false;
+    fired_force_recal = false;
+  }
+
+  if (pressed) {
+    const uint32_t held = now - press_start_ms;
+
+    if (!fired_emergency && held >= BTN_EMERGENCY_MS && state == S_RECORDING) {
+      fired_emergency = true;
+      logSerial("BUTTON: emergency stop");
+      notifyStatus("BUTTON:EMERGENCY_STOP");
+      stopRecording();
+      notifyStatus("REC:ABORTED");
+      if (calib.valid) {
+        setState(S_READY);
+      } else {
+        setState(S_NEEDS_CALIBRATION);
+      }
+    }
+
+    if (!fired_force_recal && held >= BTN_FORCE_RECALIB_MS) {
+      fired_force_recal = true;
+      forceRecalibration();
+    }
+  } else if (was_pressed) {
+    // Pressão curta: não altera estado (apenas log opcional)
+    const uint32_t held = now - press_start_ms;
+    if (held < BTN_EMERGENCY_MS) {
+      logSerialf("BUTTON: short press ignored (%u ms)", (unsigned)held);
+    }
+  }
+
+  was_pressed = pressed;
 }
 
 // ---------------------------------------------------------------------------
@@ -562,7 +908,6 @@ static void xferReset() {
   bleAbortXfer = false;
 }
 
-// 1 = ACK ok / idle, 0 = aguardando ACK, -1 = timeout
 static int xferAckState() {
   if (!xferAwaitingAck) return 1;
   if (bleXferAck) {
@@ -594,7 +939,13 @@ static bool xferSendBurstAndWaitAck() {
 
 static void xferFail() {
   if (xferFile) xferFile.close();
-  transitionTo(S_FLASH_FAIL);
+  logSerial("XFER: FAIL");
+  notifyStatus("XFER:FAIL");
+  if (calib.valid) {
+    setState(S_READY);
+  } else {
+    setState(S_ERROR);
+  }
 }
 
 static bool xferOpenFile() {
@@ -623,9 +974,20 @@ static bool xferSendPayloadChunk() {
   return true;
 }
 
+static void startTransfer() {
+  logSerial("XFER: starting");
+  setState(S_TRANSFER);
+}
+
+static void xferScheduleWait(uint32_t ms, XferPhase next) {
+  xferWaitUntilMs = millis() + ms;
+  xferAfterWaitPhase = next;
+  xferPhase = XFER_WAIT;
+}
+
 static void xferTick() {
   if (bleAbortXfer || !bleConnected) {
-    logSerial("XFER: aborted — BLE disconnected");
+    logSerial("XFER: aborted — BLE disconnected or ABORT");
     xferFail();
     return;
   }
@@ -638,19 +1000,29 @@ static void xferTick() {
         xferFail();
         return;
       }
-      xferPhase = XFER_HDR_BEGIN;
+      xferPhase = XFER_HDR_START;
+      break;
+
+    case XFER_WAIT:
+      if (millis() < xferWaitUntilMs) return;
+      xferPhase = xferAfterWaitPhase;
+      break;
+
+    case XFER_HDR_START:
+      if (!bleNotifyStatus("XFER:START")) return;
+      xferScheduleWait(XFER_HDR_LINE_DELAY_MS, XFER_HDR_BEGIN);
       break;
 
     case XFER_HDR_BEGIN:
       if (!bleNotifyStatus("===BEGIN_LAST_RUN_BIN===")) return;
-      xferPhase = XFER_HDR_PATH;
+      xferScheduleWait(XFER_HDR_LINE_DELAY_MS, XFER_HDR_PATH);
       break;
 
     case XFER_HDR_PATH: {
       char line[48];
       snprintf(line, sizeof(line), "PATH:%s", REC_PATH);
       if (!bleNotifyStatus(line)) return;
-      xferPhase = XFER_HDR_SIZE;
+      xferScheduleWait(XFER_HDR_LINE_DELAY_MS, XFER_HDR_SIZE);
       break;
     }
 
@@ -658,7 +1030,7 @@ static void xferTick() {
       char line[32];
       snprintf(line, sizeof(line), "SIZE:%u", (unsigned)xferTotalBytes);
       if (!bleNotifyStatus(line)) return;
-      xferPhase = XFER_HDR_DATA_BEGIN;
+      xferScheduleWait(XFER_HDR_LINE_DELAY_MS, XFER_HDR_DATA_BEGIN);
       break;
     }
 
@@ -666,7 +1038,7 @@ static void xferTick() {
       if (!bleNotifyStatus("DATA_BEGIN")) return;
       bleXferAck = false;
       xferAwaitingAck = false;
-      xferPhase = XFER_SEND_PAYLOAD;
+      xferScheduleWait(XFER_PRE_PAYLOAD_DELAY_MS, XFER_SEND_PAYLOAD);
       break;
 
     case XFER_SEND_PAYLOAD: {
@@ -716,13 +1088,15 @@ static void xferTick() {
       break;
 
     case XFER_FTR_OK:
+      // Mantém "XFER: OK" para compatibilidade com receive_ble.py
       if (!bleNotifyStatus("XFER: OK")) return;
       xferPhase = XFER_FINISH;
       break;
 
     case XFER_FINISH:
-      logSerial("XFER: OK");
-      transitionTo(S_FLASH_OK);
+      logSerial("XFER: OK — transfer complete");
+      notifyStatus("XFER:OK");
+      setState(S_READY);
       break;
   }
 }
@@ -730,62 +1104,46 @@ static void xferTick() {
 // ---------------------------------------------------------------------------
 // FSM — transições
 // ---------------------------------------------------------------------------
-static void onStateEnter(State entered, State previous) {
+static void onStateEnter(State entered, State /*previous*/) {
+  notifyStatus(stateTag(entered));
+
   switch (entered) {
-    case S_IDLE:
-      if (bleConnected) {
-        bleNotifyStatus("Device conectado. Esperando....");
-      }
+    case S_NEEDS_CALIBRATION:
+      calib.valid = false;
+      ledArmBlink(S_NEEDS_CALIBRATION);
       break;
 
-    case S_CALIB:
-      bleNotifyStatus("Calibrando...");
+    case S_CALIBRATING:
       calibReset();
+      ledArmBlink(S_CALIBRATING);
       break;
 
     case S_READY:
-      bleNotifyStatus("Device Calibrado! Pronto para gravar...");
+      ledApplySolid(S_READY);
       break;
 
     case S_RECORDING:
-      bleNotifyStatus("GRAVANDO...");
+      ledApplySolid(S_RECORDING);
       break;
 
-    case S_SAVE_XFER:
-      bleNotifyStatus("Gravação finalizada! Transmitindo...");
+    case S_TRANSFER:
       xferReset();
+      ledArmBlink(S_TRANSFER);
       break;
 
-    case S_FLASH_FAIL:
-      if (previous == S_CALIB) {
-        bleNotifyStatus("ERRO: calibracao falhou");
-      } else if (previous == S_SAVE_XFER) {
-        bleNotifyStatus("ERRO: transferencia falhou");
-      } else {
-        bleNotifyStatus("ERRO: operacao falhou");
-      }
+    case S_ERROR:
+      ledArmBlink(S_ERROR);
       break;
-
-  default:
-    break;
   }
 }
 
-static uint32_t t_flash_entered_ms = 0;
-
-static void transitionTo(State next) {
+static void setState(State next) {
   const State prev = state;
   if (prev == next) return;
 
   state = next;
-  ledApplyState(state);
-
-  if (next == S_FLASH_OK || next == S_FLASH_FAIL) {
-    t_flash_entered_ms = millis();
-  }
-
+  logSerialf("STATE: %s -> %s", stateTag(prev), stateTag(next));
   onStateEnter(next, prev);
-  logSerialf("STATE: %u -> %u", (unsigned)prev, (unsigned)next);
 }
 
 // ---------------------------------------------------------------------------
@@ -794,7 +1152,8 @@ static void transitionTo(State next) {
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println(F("\n=== Etapa 11: BLE + PWM ==="));
+  Serial.println(F("\n=== Kinexa firmware ==="));
+  logSerialf("BOOT: FW %s device %s", FW_VERSION, DEVICE_ID);
 
   pinMode(PIN_BUTTON, INPUT_PULLUP);
   ledInit();
@@ -802,71 +1161,55 @@ void setup() {
   Wire.begin(PIN_SDA, PIN_SCL);
   Wire.setClock(400000);
 
-  if (!mpuInit()) {
-    Serial.println(F("FATAL: MPU6050 not responding"));
-    while (true) {
-      ledSetColor(LED_FAIL);
-      delay(200);
-      ledSetColor(LED_OFF);
-      delay(200);
-    }
-  }
-
-  if (!LittleFS.begin(true)) {
-    Serial.println(F("FATAL: LittleFS mount failed"));
-    while (true) {
-      ledSetColor(LED_FAIL);
-      delay(100);
-      ledSetColor(LED_IDLE);
-      delay(100);
-    }
-  }
-
   bleInit();
 
-  state = S_IDLE;
-  ledApplyState(state);
-  logSerial("Ready — connect via BLE, then press button to calibrate.");
+  if (!mpuInitWithRetry()) {
+    logSerial("ERR: MPU6050 not responding — verifique I2C (SDA=GPIO8, SCL=GPIO9)");
+    notifyStatus("ERR:MPU");
+    setState(S_ERROR);
+    return;
+  }
+  logSerial("BOOT: MPU6050 OK");
+
+  if (!LittleFS.begin(true)) {
+    logSerial("ERR: LittleFS mount failed");
+    notifyStatus("ERR:FS");
+    setState(S_ERROR);
+    return;
+  }
+  logSerial("BOOT: LittleFS OK");
+
+  calib.valid = false;
+  // state já inicia como S_NEEDS_CALIBRATION — forçar entrada para acionar LED/BLE
+  state = S_ERROR;
+  setState(S_NEEDS_CALIBRATION);
+  logSerial("BOOT: waiting for CALIBRATE from app");
 }
 
 void loop() {
-  static uint32_t t_next_sample_us = 0;
+  ledTick();
+  buttonTick();
 
   switch (state) {
 
-    case S_IDLE:
-      if (buttonPressed()) {
-        if (!bleConnected) {
-          bleNotifyStatus("ERRO: conecte o app BLE antes de calibrar");
-          logSerial("IDLE: button ignored — no BLE connection");
-          break;
-        }
-        transitionTo(S_CALIB);
-      }
+    case S_NEEDS_CALIBRATION:
+    case S_READY:
+    case S_ERROR:
+      delay(1);
       break;
 
-    case S_CALIB:
+    case S_CALIBRATING:
       if (calibTick()) {
         calibFinalize();
-        transitionTo(calib.valid ? S_READY : S_FLASH_FAIL);
+        if (calib.valid) {
+          notifyStatus("CALIB:OK");
+          setState(S_READY);
+        } else {
+          notifyStatus("CALIB:FAIL");
+          setState(S_NEEDS_CALIBRATION);
+        }
       }
       delay(0);
-      break;
-
-    case S_READY:
-      if (buttonPressed()) {
-        if (!bleConnected) {
-          bleNotifyStatus("ERRO: conecte o app BLE antes de gravar");
-          break;
-        }
-        if (startRecording()) {
-          t_next_sample_us = micros();
-          transitionTo(S_RECORDING);
-        } else {
-          logSerial("REC: failed to open file");
-          transitionTo(S_FLASH_FAIL);
-        }
-      }
       break;
 
     case S_RECORDING: {
@@ -875,25 +1218,12 @@ void loop() {
         t_next_sample_us += SAMPLE_PERIOD_US;
         acquireOne(millis());
       }
-      delay(0);  // evita watchdog reset com BLE + LittleFS ativos
-
-      if (buttonPressed()) {
-        stopRecording();
-        logSerial("REC: file closed — starting BLE transfer");
-        transitionTo(S_SAVE_XFER);
-      }
+      delay(0);
       break;
     }
 
-    case S_SAVE_XFER:
+    case S_TRANSFER:
       xferTick();
-      break;
-
-    case S_FLASH_OK:
-    case S_FLASH_FAIL:
-      if (millis() - t_flash_entered_ms > 1000) {
-        transitionTo(S_IDLE);
-      }
       break;
   }
 }
