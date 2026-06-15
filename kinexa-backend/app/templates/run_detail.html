@@ -8,13 +8,17 @@
 </div>
 
 <h1 class="page-title">Detalhes da coleta</h1>
+<p class="page-subtitle">{{ run.athlete }} · {{ run.activity | activity_label }}</p>
 
 {% if updated %}
 <p class="flash-ok">Alterações salvas com sucesso.</p>
 {% endif %}
+{% if analyzed %}
+<p class="flash-ok">Análise concluída.</p>
+{% endif %}
 
-<section class="card">
-  <h2>Metadados</h2>
+<section class="kx-card">
+  <h2 class="section-title section-title-sm">Metadados</h2>
   <dl class="meta-grid">
     <dt>Run ID</dt>
     <dd><code>{{ run.run_id }}</code></dd>
@@ -37,6 +41,25 @@
     <dt>Amostras</dt>
     <dd>{{ run.sample_count or "—" }}</dd>
 
+    <dt>Qualidade</dt>
+    <dd>
+      {% if run.quality_status %}
+      <span class="badge badge-quality badge-{{ run.quality_status }}">{{ run.quality_status | quality_label }}</span>
+      {% else %}
+      <span class="badge badge-muted">Não classificada</span>
+      {% endif %}
+    </dd>
+
+    <dt>Análise</dt>
+    <dd>
+      {% if latest_analysis %}
+      <span class="badge badge-analysis badge-{{ latest_analysis.status }}">{{ latest_analysis.status | analysis_status_label }}</span>
+      {% if latest_analysis.cadence_spm %} — {{ latest_analysis.cadence_spm }} spm est.{% endif %}
+      {% else %}
+      <span class="badge badge-muted">Pendente</span>
+      {% endif %}
+    </dd>
+
     <dt>Registrado em</dt>
     <dd>{{ run.created_at }}</dd>
 
@@ -47,7 +70,11 @@
   </dl>
 
   <div class="actions actions-row">
-    <a href="/api/runs/{{ run.run_id }}/csv" class="btn">Baixar CSV</a>
+    <a href="/runs/{{ run.run_id }}/analysis" class="btn">Abrir análise</a>
+    <form method="post" action="/runs/{{ run.run_id }}/analyze" class="inline-form">
+      <button type="submit" class="btn btn-outline">Rodar análise</button>
+    </form>
+    <a href="/api/runs/{{ run.run_id }}/csv" class="btn btn-outline">Baixar CSV</a>
     <a href="/runs/{{ run.run_id }}/edit" class="btn btn-outline">Editar</a>
     <form method="post" action="/runs/{{ run.run_id }}/delete" class="inline-form"
           onsubmit="return confirm('Excluir esta coleta permanentemente? O CSV também será removido.');">
@@ -56,8 +83,54 @@
   </div>
 </section>
 
-<section class="card">
-  <h2>Eventos / Marcadores</h2>
+<section class="kx-card card-soft">
+  <h2 class="section-title section-title-sm">Calibração MPU6050</h2>
+  {% if calib.present %}
+  <dl class="meta-grid">
+    <dt>Status</dt>
+    <dd>
+      {% if calib.valid %}
+      <span class="badge badge-manual">Válida</span>
+      {% else %}
+      <span class="badge badge-muted">Não confirmada</span>
+      {% endif %}
+    </dd>
+    <dt>Origem</dt>
+    <dd>{{ run.calib_source | calib_source_label }}</dd>
+    <dt>Gyro bias (LSB)</dt>
+    <dd><code>{{ calib.gyro_bias_lsb[0] | round(2) }}, {{ calib.gyro_bias_lsb[1] | round(2) }}, {{ calib.gyro_bias_lsb[2] | round(2) }}</code></dd>
+    <dt>Gravidade g<sub>T</sub> (LSB)</dt>
+    <dd><code>{{ calib.gravity_T_lsb[0] | round(1) }}, {{ calib.gravity_T_lsb[1] | round(1) }}, {{ calib.gravity_T_lsb[2] | round(1) }}</code></dd>
+    <dt>‖g<sub>T</sub>‖</dt>
+    <dd>{{ calib.gravity_norm_lsb | round(0) }} LSB <span class="hint">(esperado ≈4096)</span></dd>
+  </dl>
+  <p class="hint">Persistido no banco para análise e futuro sync app/firmware. O CSV bruto mantém a mesma calibração por amostra.</p>
+  {% else %}
+  <p class="empty-state">Calibração ausente — coleta via app sem biases ou CSV incompleto. Previsto sync app/firmware.</p>
+  {% endif %}
+</section>
+
+<section class="kx-card card-soft">
+  <h2 class="section-title section-title-sm">Classificar qualidade</h2>
+  <p class="hint">Marque a coleta após revisão — não altera o CSV bruto.</p>
+  <div class="actions actions-row">
+    <form method="post" action="/runs/{{ run.run_id }}/quality" class="inline-form">
+      <input type="hidden" name="quality_status" value="valid">
+      <button type="submit" class="btn btn-sm">Válida</button>
+    </form>
+    <form method="post" action="/runs/{{ run.run_id }}/quality" class="inline-form">
+      <input type="hidden" name="quality_status" value="suspect">
+      <button type="submit" class="btn btn-sm btn-outline">Suspeita</button>
+    </form>
+    <form method="post" action="/runs/{{ run.run_id }}/quality" class="inline-form">
+      <input type="hidden" name="quality_status" value="invalid">
+      <button type="submit" class="btn btn-sm btn-danger">Inválida</button>
+    </form>
+  </div>
+</section>
+
+<section class="kx-card">
+  <h2 class="section-title section-title-sm">Eventos / Marcadores manuais</h2>
   {% if run.events %}
   <table class="data-table">
     <thead>
@@ -81,8 +154,8 @@
 </section>
 
 {% if csv_preview %}
-<section class="card">
-  <h2>Preview do CSV</h2>
+<section class="kx-card">
+  <h2 class="section-title section-title-sm">Preview do CSV</h2>
   <p class="hint">Primeiras linhas do arquivo (cabeçalho + até 10 amostras).</p>
   <pre class="csv-preview">{% for line in csv_preview %}{{ line }}
 {% endfor %}</pre>

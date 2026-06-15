@@ -22,6 +22,12 @@
     <dd>{{ run.sample_count or "—" }}</dd>
     <dt>CSV</dt>
     <dd><a href="/api/runs/{{ run.run_id }}/csv">Baixar arquivo</a></dd>
+    {% if run.calib_valid is not none %}
+    <dt>Calibração</dt>
+    <dd>{% if run.calib_valid %}<span class="badge badge-manual">Registrada</span>{% else %}<span class="badge badge-muted">Inválida</span>{% endif %}
+      {% if run.calib_source %} · {{ run.calib_source | calib_source_label }}{% endif %}
+    </dd>
+    {% endif %}
   </dl>
   <p class="hint">Os dados brutos do sensor não podem ser alterados por aqui.</p>
 </section>

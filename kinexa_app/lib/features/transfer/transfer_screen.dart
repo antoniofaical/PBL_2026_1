@@ -11,6 +11,7 @@ import '../../core/theme/app_text_styles.dart';
 import '../../core/widgets/kinexa_button.dart';
 import '../../core/widgets/kinexa_logo.dart';
 import '../../core/widgets/kinexa_scaffold.dart';
+import '../../core/widgets/kinexa_scroll_reveal.dart';
 import '../../data/models/device_model.dart';
 import '../../data/models/run_model.dart';
 import '../../overlays/debug_bottom_sheet.dart';
@@ -262,6 +263,7 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
       createdAt: now,
       syncStatus: SyncStatus.localOnly,
       events: session.events.map((e) => e.copyWith(runId: runId)).toList(),
+      calibration: download.calibration,
     );
 
     try {
@@ -587,7 +589,7 @@ class _TransferScreenState extends ConsumerState<TransferScreen> {
         children: [
           _TransferHeader(isOnline: isOnline),
           Expanded(
-            child: SingleChildScrollView(
+            child: KinexaScrollReveal(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,

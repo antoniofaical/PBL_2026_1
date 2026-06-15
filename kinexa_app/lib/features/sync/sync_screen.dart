@@ -8,6 +8,7 @@ import '../../core/theme/app_radii.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/widgets/kinexa_button.dart';
 import '../../core/widgets/kinexa_scaffold.dart';
+import '../../core/widgets/kinexa_scroll_reveal.dart';
 import '../../core/widgets/sync_brand_header.dart';
 import '../../core/widgets/sync_version_footer.dart';
 import '../../debug/demo_runs_seed.dart';
@@ -131,7 +132,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
         final compact = constraints.maxHeight < 420;
         final gap = compact ? 20.0 : 40.0;
 
-        return SingleChildScrollView(
+        return KinexaScrollReveal(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: constraints.maxHeight),
@@ -168,7 +169,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   }
 
   Widget _failedBody() {
-    return SingleChildScrollView(
+    return KinexaScrollReveal(
       padding: const EdgeInsets.symmetric(horizontal: 28),
       child: Column(
         children: [

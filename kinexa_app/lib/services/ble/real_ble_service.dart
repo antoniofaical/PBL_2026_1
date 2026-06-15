@@ -442,13 +442,17 @@ class RealBleService implements BleService {
 
       final csv = KinexaRunPayloadParser.toCsv(parsed);
       _device = _device?.copyWith(state: DeviceState.ready);
-      _log('XFER:OK samples=${parsed.samples.length} packets=${xfer.packetCount}');
+      _log(
+        'XFER:OK samples=${parsed.samples.length} packets=${xfer.packetCount} '
+        'calib=${parsed.calib.valid}',
+      );
 
       return BleDownloadResult(
         csvContent: csv,
         sampleCount: parsed.samples.length,
         packetCount: xfer.packetCount,
         durationMs: KinexaRunPayloadParser.durationMs(parsed),
+        calibration: parsed.calib.toCalibrationModel(),
       );
     } catch (e, st) {
       _log('download error: $e');

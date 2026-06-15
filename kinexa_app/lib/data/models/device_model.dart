@@ -1,4 +1,5 @@
 import '../../core/constants/enums.dart';
+import 'run_calibration_model.dart';
 
 class DeviceModel {
   DeviceModel({
@@ -41,12 +42,14 @@ class BleDownloadResult {
     required this.sampleCount,
     required this.packetCount,
     required this.durationMs,
+    this.calibration,
   });
 
   final String csvContent;
   final int sampleCount;
   final int packetCount;
   final int durationMs;
+  final RunCalibrationModel? calibration;
 }
 
 @Deprecated('Use BleDownloadResult')

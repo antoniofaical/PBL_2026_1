@@ -1,5 +1,6 @@
 import '../../core/constants/enums.dart';
 import 'event_model.dart';
+import 'run_calibration_model.dart';
 
 class RunModel {
   RunModel({
@@ -16,6 +17,7 @@ class RunModel {
     this.createdAt,
     this.syncStatus = SyncStatus.localOnly,
     this.events = const [],
+    this.calibration,
   });
 
   final String runId;
@@ -31,6 +33,10 @@ class RunModel {
   final String? createdAt;
   final SyncStatus syncStatus;
   final List<EventModel> events;
+  final RunCalibrationModel? calibration;
+
+  RunCalibrationModel? get effectiveCalibration =>
+      calibration ?? RunCalibrationModel.tryFromCsv(csvContent);
 
   Map<String, dynamic> toMap() => {
         'run_id': runId,
@@ -47,17 +53,21 @@ class RunModel {
         'sync_status': syncStatus.key,
       };
 
-  Map<String, dynamic> toUploadJson() => {
-        'run_id': runId,
-        'device_id': deviceId,
-        'datetime': datetime,
-        'athlete': athlete,
-        'activity': activity,
-        'environment': environment,
-        if (notes != null && notes!.isNotEmpty) 'notes': notes,
-        'events': events.map((e) => e.toUploadJson()).toList(),
-        'csv': csvContent ?? '',
-      };
+  Map<String, dynamic> toUploadJson() {
+    final calib = effectiveCalibration;
+    return {
+      'run_id': runId,
+      'device_id': deviceId,
+      'datetime': datetime,
+      'athlete': athlete,
+      'activity': activity,
+      'environment': environment,
+      if (notes != null && notes!.isNotEmpty) 'notes': notes,
+      'events': events.map((e) => e.toUploadJson()).toList(),
+      'csv': csvContent ?? '',
+      if (calib != null) 'calibration': calib.toUploadJson(),
+    };
+  }
 
   factory RunModel.fromMap(Map<String, dynamic> map, {List<EventModel>? events}) =>
       RunModel(
@@ -91,6 +101,7 @@ class RunModel {
       sampleCount: json['sample_count'] as int?,
       createdAt: json['created_at']?.toString(),
       syncStatus: SyncStatus.synced,
+      calibration: RunCalibrationModel.tryFromApiJson(json),
       events: eventsJson
           .map((e) => EventModel.fromApiJson(e as Map<String, dynamic>))
           .toList(),
@@ -107,10 +118,12 @@ class RunModel {
     String? notes,
     String? csvPath,
     String? csvContent,
+    bool clearCsvContent = false,
     int? sampleCount,
     String? createdAt,
     SyncStatus? syncStatus,
     List<EventModel>? events,
+    RunCalibrationModel? calibration,
   }) =>
       RunModel(
         runId: runId ?? this.runId,
@@ -121,10 +134,11 @@ class RunModel {
         environment: environment ?? this.environment,
         notes: notes ?? this.notes,
         csvPath: csvPath ?? this.csvPath,
-        csvContent: csvContent ?? this.csvContent,
+        csvContent: clearCsvContent ? null : (csvContent ?? this.csvContent),
         sampleCount: sampleCount ?? this.sampleCount,
         createdAt: createdAt ?? this.createdAt,
         syncStatus: syncStatus ?? this.syncStatus,
         events: events ?? this.events,
+        calibration: calibration ?? this.calibration,
       );
 }

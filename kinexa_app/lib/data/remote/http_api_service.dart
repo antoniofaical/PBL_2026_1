@@ -61,8 +61,14 @@ class HttpApiService implements ApiService {
   }
 
   @override
-  Future<List<RunModel>> fetchRuns() async {
-    final res = await _dio.get(ApiConstants.runs);
+  Future<List<RunModel>> fetchRuns({int? limit, int skip = 0}) async {
+    final query = <String, dynamic>{};
+    if (limit != null) query['limit'] = limit;
+    if (skip > 0) query['skip'] = skip;
+    final res = await _dio.get(
+      ApiConstants.runs,
+      queryParameters: query.isEmpty ? null : query,
+    );
     final list = res.data as List<dynamic>;
     return list
         .map((e) => RunModel.fromApiJson(e as Map<String, dynamic>))
@@ -79,7 +85,10 @@ class HttpApiService implements ApiService {
   Future<String> fetchRunCsv(String runId) async {
     final res = await _dio.get(
       ApiConstants.runCsv(runId),
-      options: Options(responseType: ResponseType.plain),
+      options: Options(
+        responseType: ResponseType.plain,
+        receiveTimeout: ApiConstants.csvReceiveTimeout,
+      ),
     );
     if (kDebugMode) {
       final csv = res.data as String? ?? '';

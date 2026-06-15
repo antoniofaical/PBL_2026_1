@@ -5,8 +5,14 @@ from pathlib import Path
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.calibration import (
+    CALIB_SOURCE_APP,
+    apply_calibration_to_run,
+    calibration_from_csv_content,
+    calibration_from_csv_path,
+)
 from app.config import UPLOAD_DIR
-from app.models import Event, Run
+from app.models import Event, Run, RunAnalysis
 from app.schemas import EventCreate, RunUpdate, RunUpload
 
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9_\-\.]+$")
@@ -50,6 +56,52 @@ def get_dashboard_stats(db: Session) -> dict:
     }
 
 
+def _resolve_calibration(payload: RunUpload) -> dict | None:
+    """Prioridade: payload explícito (futuro app) → colunas no CSV."""
+    if payload.calibration is not None:
+        c = payload.calibration
+        if c.calib_source:
+            source = c.calib_source
+        else:
+            source = CALIB_SOURCE_APP
+        return {
+            "calib_gx_bias_lsb": c.calib_gx_bias_lsb,
+            "calib_gy_bias_lsb": c.calib_gy_bias_lsb,
+            "calib_gz_bias_lsb": c.calib_gz_bias_lsb,
+            "calib_g_T_x_lsb": c.calib_g_T_x_lsb,
+            "calib_g_T_y_lsb": c.calib_g_T_y_lsb,
+            "calib_g_T_z_lsb": c.calib_g_T_z_lsb,
+            "calib_valid": c.calib_valid,
+            "calib_source": source,
+        }
+    return calibration_from_csv_content(payload.csv)
+
+
+def sync_run_calibration_from_csv(db: Session, run: Run) -> Run:
+    """Re-lê calibração do CSV em disco e persiste no Run."""
+    csv_file = Path(run.csv_path)
+    if not csv_file.is_file():
+        return run
+    calib = calibration_from_csv_path(str(csv_file))
+    apply_calibration_to_run(run, calib)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def backfill_all_calibrations(db: Session) -> int:
+    """Extrai calibração do CSV de todas as runs e atualiza o banco."""
+    updated = 0
+    for run in db.query(Run).all():
+        calib = calibration_from_csv_path(run.csv_path)
+        if calib is None:
+            continue
+        apply_calibration_to_run(run, calib)
+        updated += 1
+    db.commit()
+    return updated
+
+
 def create_run_from_upload(db: Session, payload: RunUpload) -> tuple[Run, int]:
     sample_count = count_csv_samples(payload.csv)
     csv_path = safe_csv_path(payload.run_id)
@@ -67,6 +119,7 @@ def create_run_from_upload(db: Session, payload: RunUpload) -> tuple[Run, int]:
         csv_path=str(csv_path),
         sample_count=sample_count,
     )
+    apply_calibration_to_run(run, _resolve_calibration(payload))
     db.add(run)
 
     for event_data in payload.events:
@@ -143,6 +196,34 @@ def update_run(db: Session, run: Run, payload: RunUpdate) -> Run:
     db.commit()
     db.refresh(run)
     return run
+
+
+def get_latest_analysis(db: Session, run_id: str) -> RunAnalysis | None:
+    return (
+        db.query(RunAnalysis)
+        .filter(RunAnalysis.run_id == run_id)
+        .order_by(RunAnalysis.created_at.desc())
+        .first()
+    )
+
+
+def set_quality_status(db: Session, run: Run, status: str) -> Run:
+    if status not in ("valid", "suspect", "invalid"):
+        raise ValueError("status deve ser valid, suspect ou invalid")
+    run.quality_status = status
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def get_runs_with_analysis(db: Session, skip: int = 0, limit: int | None = None) -> list[dict]:
+    """Lista runs enriquecidas com última análise (para tabela do dashboard)."""
+    runs = get_runs(db, skip=skip, limit=limit)
+    enriched = []
+    for run in runs:
+        analysis = get_latest_analysis(db, run.run_id)
+        enriched.append({"run": run, "analysis": analysis})
+    return enriched
 
 
 def create_simulated_run(db: Session) -> Run:

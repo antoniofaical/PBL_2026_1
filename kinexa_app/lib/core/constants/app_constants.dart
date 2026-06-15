@@ -9,4 +9,7 @@ class AppConstants {
   static const String defaultDeviceKey = 'default_device_id';
   static const String lastSyncKey = 'last_sync';
   static const String offlineModeKey = 'offline_mode';
+
+  /// Máximo de coletas remotas com CSV completo baixado por sync.
+  static const int syncRemotePullLimit = 5;
 }

@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../../data/models/run_calibration_model.dart';
+
 /// Dados de calibração gravados no cabeçalho de `/last_run.bin`.
 class KinexaCalibData {
   const KinexaCalibData({
@@ -19,6 +21,16 @@ class KinexaCalibData {
   final double gTy;
   final double gTz;
   final bool valid;
+
+  RunCalibrationModel toCalibrationModel() => RunCalibrationModel(
+        gxBiasLsb: gxBias,
+        gyBiasLsb: gyBias,
+        gzBiasLsb: gzBias,
+        gTxLsb: gTx,
+        gTyLsb: gTy,
+        gTzLsb: gTz,
+        valid: valid,
+      );
 }
 
 class KinexaImuSample {
@@ -107,16 +119,24 @@ class KinexaRunPayloadParser {
     );
   }
 
-  /// CSV mínimo compatível com backend Kinexa e mock BLE.
+  /// CSV com bias de giroscópio e vetor gravidade (LSB) — schema do receptor serial.
   static String toCsv(KinexaParsedRun run) {
+    final calib = run.calib.toCalibrationModel();
+    final calibCols = RunCalibrationModel.csvHeaderNames();
+    final calibVals = calib.csvValues();
+
     final buffer = StringBuffer(
-      't_ms,ax_raw,ay_raw,az_raw,gx_raw,gy_raw,gz_raw\n',
+      't_ms,ax_raw,ay_raw,az_raw,gx_raw,gy_raw,gz_raw,${calibCols.join(',')}\n',
     );
     for (final sample in run.samples) {
-      buffer.writeln(
+      buffer.write(
         '${sample.tMs},${sample.ax},${sample.ay},${sample.az},'
         '${sample.gx},${sample.gy},${sample.gz}',
       );
+      for (final v in calibVals) {
+        buffer.write(',$v');
+      }
+      buffer.writeln();
     }
     return buffer.toString();
   }

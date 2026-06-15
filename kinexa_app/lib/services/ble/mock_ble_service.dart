@@ -5,6 +5,7 @@ import '../../core/constants/enums.dart';
 import '../../data/models/device_model.dart';
 import '../logs/debug_log_service.dart';
 import 'ble_exception.dart';
+import 'ble_run_payload.dart';
 import 'ble_run_receiver.dart';
 import 'ble_service.dart';
 
@@ -140,23 +141,45 @@ class MockBleService implements BleService {
       await Future.delayed(const Duration(milliseconds: 120));
     }
 
-    final buffer = StringBuffer('t_ms,ax_raw,ay_raw,az_raw,gx_raw,gy_raw,gz_raw\n');
+    const mockCalib = KinexaCalibData(
+      gxBias: -111.6,
+      gyBias: 37.06,
+      gzBias: -56.99,
+      gTx: 2582.65,
+      gTy: 1355.45,
+      gTz: 2718.38,
+      valid: true,
+    );
+    final samples = <KinexaImuSample>[];
     for (var i = 0; i < sampleCount; i++) {
-      buffer.writeln(
-        '${i * 2},${1960 + rng.nextInt(80)},${-500 + rng.nextInt(40)},'
-        '${3400 + rng.nextInt(60)},${-360 + rng.nextInt(20)},'
-        '${-370 + rng.nextInt(15)},${-40 + rng.nextInt(10)}',
+      samples.add(
+        KinexaImuSample(
+          tMs: i * 2,
+          ax: 1960 + rng.nextInt(80),
+          ay: -500 + rng.nextInt(40),
+          az: 3400 + rng.nextInt(60),
+          gx: -360 + rng.nextInt(20),
+          gy: -370 + rng.nextInt(15),
+          gz: -40 + rng.nextInt(10),
+        ),
       );
     }
+    final parsed = KinexaParsedRun(
+      calib: mockCalib,
+      samples: samples,
+      sourcePath: '/mock_last_run.bin',
+    );
+    final csv = KinexaRunPayloadParser.toCsv(parsed);
     await Future.delayed(const Duration(milliseconds: 400));
     _logs.add('BLE: XFER:OK');
     _device = _device?.copyWith(state: DeviceState.ready);
 
     return BleDownloadResult(
-      csvContent: buffer.toString(),
+      csvContent: csv,
       sampleCount: sampleCount,
       packetCount: packetCount,
       durationMs: sampleCount * 2,
+      calibration: mockCalib.toCalibrationModel(),
     );
   }
 

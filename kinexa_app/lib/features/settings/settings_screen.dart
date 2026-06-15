@@ -12,6 +12,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/widgets/kinexa_logo.dart';
 import '../../core/widgets/kinexa_scaffold.dart';
+import '../../core/widgets/kinexa_scroll_reveal.dart';
 import '../../data/models/device_model.dart';
 import '../../data/repositories/sync_repository.dart';
 import '../../overlays/sensor_search_overlay.dart';
@@ -256,7 +257,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             },
           ),
           Expanded(
-            child: ListView(
+            child: KinexaScrollReveal.list(
               padding: const EdgeInsets.all(20),
               children: [
                 Text(

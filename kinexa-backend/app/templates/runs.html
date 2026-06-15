@@ -4,42 +4,45 @@
 
 {% block content %}
 <h1 class="page-title">Coletas</h1>
+<p class="page-subtitle">Gestão e análise de aquisições sincronizadas do app Kinexa.</p>
 
 {% if deleted %}
 <p class="flash-ok">Coleta excluída com sucesso.</p>
 {% endif %}
 
-<section class="card">
-  {% if runs %}
-  <div class="table-wrap">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Atleta</th>
-          <th>Atividade</th>
-          <th>Ambiente</th>
-          <th>Data/Hora</th>
-          <th>Device</th>
-          <th>Amostras</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for run in runs %}
-        <tr>
-          <td><code title="{{ run.run_id }}">{{ run.run_id | abbreviate_run_id }}</code></td>
-          <td>{{ run.athlete }}</td>
-          <td>{{ run.activity | activity_label }}</td>
-          <td>{{ run.environment | environment_label }}</td>
-          <td>{{ run.datetime }}</td>
-          <td><code>{{ run.device_id }}</code></td>
-          <td>{{ run.sample_count or "—" }}</td>
-          <td><a href="/runs/{{ run.run_id }}" class="btn btn-sm">Detalhes</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<section class="section-block">
+  {% if runs_enriched %}
+  <div class="run-list">
+    {% for item in runs_enriched %}
+    {% set run = item.run %}
+    {% set analysis = item.analysis %}
+    <article class="run-card kx-card">
+      <h3 class="run-card-athlete">{{ run.athlete }}</h3>
+      <p class="run-card-meta">{{ run.activity | activity_label }} — {{ run.environment | environment_label }}</p>
+      <p class="run-card-meta">
+        {% if run.calib_valid %}<span class="pill pill-muted">Calib OK</span>{% elif run.calib_valid is none %}<span class="pill pill-accent">Sem calib</span>{% endif %}
+        {% if analysis and analysis.duration_ms %}{{ "%.1f"|format(analysis.duration_ms / 1000) }} s{% else %}—{% endif %}
+        · {{ run.sample_count or (analysis.sample_count if analysis else "—") }} amostras
+        {% if analysis and analysis.mean_fs_hz %} · {{ analysis.mean_fs_hz }} Hz{% endif %}
+      </p>
+      <div class="run-card-footer">
+        <span class="run-card-date">{{ run.datetime }}</span>
+        <div class="run-card-actions">
+          {% if run.quality_status %}
+          <span class="pill pill-muted">{{ run.quality_status | quality_label }}</span>
+          {% endif %}
+          {% if analysis %}
+          <span class="pill {% if analysis.status == 'completed' %}pill-muted{% else %}pill-accent{% endif %}">{{ analysis.status | analysis_status_label }}</span>
+          {% else %}
+          <span class="pill pill-accent">Pendente</span>
+          {% endif %}
+          <a href="/runs/{{ run.run_id }}" class="pill pill-muted">Detalhe</a>
+          <a href="/runs/{{ run.run_id }}/analysis" class="pill pill-accent">Analisar</a>
+          <a href="/api/runs/{{ run.run_id }}/csv" class="pill pill-muted">CSV</a>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
   </div>
   {% else %}
   <p class="empty-state">Nenhuma coleta registrada ainda.</p>

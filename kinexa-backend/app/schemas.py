@@ -10,6 +10,21 @@ VALID_ACTIVITIES = {1, 2, 3, 4}
 VALID_ENVIRONMENTS = {1, 2}
 
 
+class RunCalibration(BaseModel):
+    """Calibração registrada no device — futuro sync app/firmware."""
+    calib_gx_bias_lsb: float | None = None
+    calib_gy_bias_lsb: float | None = None
+    calib_gz_bias_lsb: float | None = None
+    calib_g_T_x_lsb: float | None = None
+    calib_g_T_y_lsb: float | None = None
+    calib_g_T_z_lsb: float | None = None
+    calib_valid: bool | None = None
+    calib_source: str | None = Field(
+        default=None,
+        description="csv | app | firmware | manual",
+    )
+
+
 class EventCreate(BaseModel):
     timestamp_ms: int = Field(..., ge=0)
     description: str | None = None
@@ -23,6 +38,7 @@ class RunUpload(BaseModel):
     activity: int
     environment: int
     notes: str | None = None
+    calibration: RunCalibration | None = None
     events: list[EventCreate] = Field(default_factory=list)
     csv: str = Field(..., min_length=1)
 
@@ -70,6 +86,14 @@ class RunRead(BaseModel):
     notes: str | None
     csv_path: str
     sample_count: int | None
+    calib_gx_bias_lsb: float | None = None
+    calib_gy_bias_lsb: float | None = None
+    calib_gz_bias_lsb: float | None = None
+    calib_g_T_x_lsb: float | None = None
+    calib_g_T_y_lsb: float | None = None
+    calib_g_T_z_lsb: float | None = None
+    calib_valid: bool | None = None
+    calib_source: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

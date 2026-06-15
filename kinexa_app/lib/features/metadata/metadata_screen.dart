@@ -10,6 +10,7 @@ import '../../core/widgets/kinexa_button.dart';
 import '../../core/widgets/kinexa_form_field.dart';
 import '../../core/widgets/kinexa_logo.dart';
 import '../../core/widgets/kinexa_scaffold.dart';
+import '../../core/widgets/kinexa_scroll_reveal.dart';
 import '../../providers.dart';
 
 class MetadataScreen extends ConsumerStatefulWidget {
@@ -74,7 +75,7 @@ class _MetadataScreenState extends ConsumerState<MetadataScreen> {
           Expanded(
             child: ColoredBox(
               color: AppColors.popupBackground,
-              child: SingleChildScrollView(
+              child: KinexaScrollReveal(
                 padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,

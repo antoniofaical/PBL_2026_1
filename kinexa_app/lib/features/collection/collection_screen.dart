@@ -12,6 +12,7 @@ import '../../core/theme/app_text_styles.dart';
 import '../../core/widgets/kinexa_collection_timer.dart';
 import '../../core/widgets/kinexa_logo.dart';
 import '../../core/widgets/kinexa_scaffold.dart';
+import '../../core/widgets/kinexa_scroll_reveal.dart';
 import '../../core/widgets/digital_display.dart';
 import '../../data/models/event_model.dart';
 import '../../overlays/register_event_dialog.dart';
@@ -190,7 +191,7 @@ class _CollectionScreenState extends ConsumerState<CollectionScreen> {
                             ? (constraints.maxHeight * 0.28).clamp(72.0, 140.0)
                             : null;
 
-                        return SingleChildScrollView(
+                        return KinexaScrollReveal(
                           padding: const EdgeInsets.fromLTRB(10, 12, 10, 8),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,

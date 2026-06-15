@@ -11,6 +11,7 @@ import '../../core/widgets/kinexa_button.dart';
 import '../../core/widgets/kinexa_calibration_tips_card.dart';
 import '../../core/widgets/kinexa_logo.dart';
 import '../../core/widgets/kinexa_scaffold.dart';
+import '../../core/widgets/kinexa_scroll_reveal.dart';
 import '../../overlays/calibration_positioning_overlay.dart';
 import '../../providers.dart';
 
@@ -98,7 +99,7 @@ class _CalibrationScreenState extends ConsumerState<CalibrationScreen> {
                 padding: const EdgeInsets.fromLTRB(20, 40, 20, 40),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    return SingleChildScrollView(
+                    return KinexaScrollReveal(
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
                           minHeight: constraints.maxHeight,

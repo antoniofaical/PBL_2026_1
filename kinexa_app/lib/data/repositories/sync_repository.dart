@@ -89,11 +89,20 @@ class SyncRepository {
     }
   }
 
-  /// Baixa runs do servidor (fonte de verdade) e remove cópias locais órfãs.
-  /// Retorna quantas coletas locais sincronizadas foram removidas.
+  /// Catálogo leve de todas as runs; CSV completo só das N mais recentes (servidor).
   Future<int> pullRemoteRuns() async {
-    final remoteRuns = await _api.fetchRuns();
-    final remoteIds = remoteRuns.map((r) => r.runId).toSet();
+    final limit = AppConstants.syncRemotePullLimit;
+    final allRuns = await _api.fetchRuns();
+    final recentRuns = await _api.fetchRuns(limit: limit);
+    final remoteIds = allRuns.map((r) => r.runId).toSet();
+    final fullPullIds = recentRuns.map((r) => r.runId).toSet();
+
+    if (kDebugMode) {
+      debugPrint(
+        '[Kinexa Sync] pull: ${allRuns.length} no servidor, '
+        '${recentRuns.length} com CSV → ${fullPullIds.join(", ")}',
+      );
+    }
 
     var pruned = 0;
     final localRuns = await _runRepo.getLocalRuns();
@@ -111,7 +120,14 @@ class SyncRepository {
       }
     }
 
-    for (final summary in remoteRuns) {
+    for (final summary in allRuns) {
+      if (fullPullIds.contains(summary.runId)) continue;
+      await _runRepo.saveLocal(
+        summary.copyWith(syncStatus: SyncStatus.synced, clearCsvContent: true),
+      );
+    }
+
+    for (final summary in recentRuns) {
       try {
         final detail = await _api.fetchRunDetail(summary.runId);
         String? csv;

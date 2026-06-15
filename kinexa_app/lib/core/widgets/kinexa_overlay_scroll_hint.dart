@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../theme/app_text_styles.dart';
+import 'kinexa_scroll_reveal.dart';
 
 class KinexaOverlayScrollArea extends StatefulWidget {
   const KinexaOverlayScrollArea({
@@ -19,8 +20,11 @@ class KinexaOverlayScrollArea extends StatefulWidget {
 }
 
 class _KinexaOverlayScrollAreaState extends State<KinexaOverlayScrollArea>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, KinexaScrollRevealBehavior {
   final _controller = ScrollController();
+
+  @override
+  ScrollController get scrollRevealController => _controller;
   late final AnimationController _bounce;
   late final Animation<double> _bounceOffset;
   bool _showHint = false;
@@ -36,6 +40,7 @@ class _KinexaOverlayScrollAreaState extends State<KinexaOverlayScrollArea>
       CurvedAnimation(parent: _bounce, curve: Curves.easeInOut),
     );
     _controller.addListener(_onScroll);
+    initScrollReveal();
     WidgetsBinding.instance.addPostFrameCallback((_) => _updateHint());
   }
 
@@ -47,6 +52,7 @@ class _KinexaOverlayScrollAreaState extends State<KinexaOverlayScrollArea>
 
   @override
   void dispose() {
+    disposeScrollReveal();
     _controller
       ..removeListener(_onScroll)
       ..dispose();

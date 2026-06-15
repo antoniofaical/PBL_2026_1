@@ -9,6 +9,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/widgets/kinexa_logo.dart';
 import '../../core/widgets/kinexa_scaffold.dart';
+import '../../core/widgets/kinexa_scroll_reveal.dart';
 import '../../providers.dart';
 
 class AboutScreen extends ConsumerStatefulWidget {
@@ -56,7 +57,7 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                return SingleChildScrollView(
+                return KinexaScrollReveal(
                   padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
                   child: ConstrainedBox(
                     constraints: BoxConstraints(minHeight: constraints.maxHeight),
