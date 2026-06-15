@@ -1,343 +1,229 @@
 """
-ler_dados.py
-============
-Le arquivos de aquisição do MPU6050 em dois formatos:
+ler_dados.py — Módulo de carregamento e conversão dos dados do IMU (ESP32-C3 + MPU6050)
+========================================================================================
 
-1) .bin original gravado pelo firmware no LittleFS
-2) .csv gerado por receive_ble.py ou receive_serial.py
+Formato de CSV gerado pelo firmware PBL_IMU:
+  - Seção de cabeçalho (linhas iniciadas com '#'):
+      # CALIB accel_x_offset accel_y_offset accel_z_offset
+      # GYRO_BIAS gx_bias gy_bias gz_bias
+      # GYRO_RANGE 2000          ← range configurado em °/s
+      # ACCEL_RANGE 8            ← range configurado em g
+      # SAMPLE_RATE 500          ← Hz
+  - Dados (uma linha por amostra):
+      sample_num, t_ms, ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw
 
-Schema CSV esperado:
-    sample_index,t_ms,ax_raw,ay_raw,az_raw,gx_raw,gy_raw,gz_raw,
-    calib_gx_bias_lsb,calib_gy_bias_lsb,calib_gz_bias_lsb,
-    calib_g_T_x_lsb,calib_g_T_y_lsb,calib_g_T_z_lsb,calib_valid,
-    source_path,source_size_bytes,received_at
+Convenção de eixos (MPU6050 montado no dorso do pé, X → dedos, Y → mediolateral):
+  - gyro.y = Ωp (velocidade angular de pitch) — eixo usado pelo método Falbriard
 
-CONFIGURAÇÃO DO MPU6050 NO FIRMWARE:
-    Acelerômetro: ±8 g       -> 4096 LSB/g
-    Giroscópio:  ±1000 °/s   -> 32.8 LSB/(°/s)
-    Taxa-alvo: 500 Hz
+Sensibilidade padrão configurada no firmware:
+  - GYRO_CONFIG = 0x18  → ±2000 °/s → 16.4 LSB/(°/s)
+  - ACCEL_CONFIG = 0x10 → ±8 g       → 4096 LSB/g
 
-USO:
-    python ler_dados.py last_run.csv
-    python ler_dados.py last_run.csv --csv-si
-    python ler_dados.py corridas/run_001.bin
-    python ler_dados.py corridas/run_001.bin --csv-si
-
-REQUISITOS:
-    pip install numpy matplotlib
+Atualização v2 (2026-06):
+  - GYRO_SENS corrigido de 32.8 → 16.4 LSB/(°/s) para GYRO_CONFIG = 0x18
+  - Detecção automática do range a partir do cabeçalho '#GYRO_RANGE'
+  - Backward-compat: se cabeçalho ausente, usa GYRO_SENS_DEFAULT
 """
 
-from __future__ import annotations
-
-import argparse
-import csv
-import struct
-import sys
-from pathlib import Path
-from typing import Any
-
-import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
 
-from pbl_data.format import (
-    ACCEL_SENSITIVITY_LSB_PER_G,
-    CSV_REQUIRED_COLUMNS,
-    GYRO_SENSITIVITY_LSB_PER_DPS,
-    HEADER_FMT,
-    HEADER_SIZE,
-    SAMPLE_RATE_HZ,
-    SAMPLE_SIZE,
-)
+# ── Constantes de hardware ────────────────────────────────────────────────────
 
-SAMPLE_DTYPE = np.dtype([
-    ("t_ms", "<u4"),
-    ("ax", "<i2"), ("ay", "<i2"), ("az", "<i2"),
-    ("gx", "<i2"), ("gy", "<i2"), ("gz", "<i2"),
-])
+SAMPLE_RATE_HZ = 500  # Hz — taxa de amostragem padrão do firmware
 
-CSV_REQUIRED_COLUMNS = set(CSV_REQUIRED_COLUMNS)
+# Sensibilidades padrão (firmware com GYRO_CONFIG=0x18, ACCEL_CONFIG=0x10)
+GYRO_SENS_DEFAULT  = 16.4    # LSB/(°/s) — ±2000 °/s
+ACCEL_SENS_DEFAULT = 4096.0  # LSB/g     — ±8 g
 
+# Tabela de sensibilidade vs. range (MPU6050 datasheet, Table 1 e 3)
+_GYRO_SENS_TABLE  = {250: 131.0, 500: 65.5, 1000: 32.8, 2000: 16.4}
+_ACCEL_SENS_TABLE = {2: 16384.0, 4: 8192.0, 8: 4096.0, 16: 2048.0}
 
-def _parse_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    text = str(value).strip().lower()
-    return text in {"1", "true", "t", "yes", "y", "sim", "s"}
+# ── Funções públicas ──────────────────────────────────────────────────────────
 
-
-def carregar_bin(caminho: str | Path) -> tuple[dict[str, Any], np.ndarray]:
+def carregar_aquisicao(csv_path):
     """
-    Lê o .bin original e devolve (calib, samples).
+    Carrega um arquivo CSV gerado pelo firmware PBL_IMU.
 
-    samples usa campos padronizados:
-        t_ms, ax, ay, az, gx, gy, gz
+    Parâmetros
+    ----------
+    csv_path : str | Path
+
+    Retorna
+    -------
+    calib : dict
+        Informações de calibração e configuração extraídas do cabeçalho.
+        Campos garantidos: valid (bool), gyro_sens (float), accel_sens (float),
+        gyro_range_dps (int), accel_range_g (int), sample_rate (int),
+        accel_offsets (ndarray[3]), gyro_bias (ndarray[3]).
+
+    samples : dict
+        Arrays raw (int16) de cada canal:
+        t_ms, ax, ay, az, gx, gy, gz.
+        Também expõe 'n_samples' (int).
     """
-    caminho = Path(caminho)
-    if not caminho.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {caminho}")
+    path = Path(csv_path)
+    calib = _parse_header(path)
 
-    with caminho.open("rb") as f:
-        header_bytes = f.read(HEADER_SIZE)
-        if len(header_bytes) < HEADER_SIZE:
-            raise ValueError("Arquivo curto demais — não contém cabeçalho completo.")
+    t_ms_l, ax_l, ay_l, az_l = [], [], [], []
+    gx_l,   gy_l, gz_l       = [], [], []
 
-        gx_b, gy_b, gz_b, gx_t, gy_t, gz_t, valid_raw = struct.unpack(HEADER_FMT, header_bytes)
-        calib = {
-            "gyro_bias_lsb": np.array([gx_b, gy_b, gz_b], dtype=np.float64),
-            "gravity_T_lsb": np.array([gx_t, gy_t, gz_t], dtype=np.float64),
-            "valid": (valid_raw & 0xFF) != 0,
-            "source_format": "bin",
-            "source_path": str(caminho),
-        }
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("sample"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 8:
+                continue
+            try:
+                t_ms_l.append(int(parts[1]))
+                ax_l.append(int(parts[2]))
+                ay_l.append(int(parts[3]))
+                az_l.append(int(parts[4]))
+                gx_l.append(int(parts[5]))
+                gy_l.append(int(parts[6]))   # Ωp — pitch angular velocity
+                gz_l.append(int(parts[7]))
+            except (ValueError, IndexError):
+                continue
 
-        rest = f.read()
-
-    n_samples = len(rest) // SAMPLE_SIZE
-    if n_samples == 0:
-        raise ValueError("Arquivo sem amostras.")
-
-    remainder = len(rest) % SAMPLE_SIZE
-    if remainder:
-        print(
-            f"AVISO: {remainder} byte(s) extra no fim do .bin serão ignorados.",
-            file=sys.stderr,
-        )
-
-    rest = rest[:n_samples * SAMPLE_SIZE]
-    samples = np.frombuffer(rest, dtype=SAMPLE_DTYPE).copy()
-    return calib, samples
-
-
-def carregar_csv_schema_serial(caminho: str | Path) -> tuple[dict[str, Any], np.ndarray]:
-    """
-    Lê o CSV gerado pelo receptor serial e devolve (calib, samples).
-
-    O CSV tem colunas *_raw; internamente elas são remapeadas para os nomes
-    usados pelo pipeline antigo: ax, ay, az, gx, gy, gz.
-    """
-    caminho = Path(caminho)
-    if not caminho.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {caminho}")
-
-    with caminho.open("r", newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        if reader.fieldnames is None:
-            raise ValueError("CSV vazio ou sem cabeçalho.")
-
-        columns = set(reader.fieldnames)
-        missing = sorted(CSV_REQUIRED_COLUMNS - columns)
-        if missing:
-            raise ValueError(
-                "CSV não corresponde ao schema serial esperado. "
-                f"Colunas ausentes: {', '.join(missing)}"
-            )
-
-        rows = list(reader)
-
-    if not rows:
-        raise ValueError("CSV sem amostras.")
-
-    first = rows[0]
-    calib = {
-        "gyro_bias_lsb": np.array([
-            float(first["calib_gx_bias_lsb"]),
-            float(first["calib_gy_bias_lsb"]),
-            float(first["calib_gz_bias_lsb"]),
-        ], dtype=np.float64),
-        "gravity_T_lsb": np.array([
-            float(first["calib_g_T_x_lsb"]),
-            float(first["calib_g_T_y_lsb"]),
-            float(first["calib_g_T_z_lsb"]),
-        ], dtype=np.float64),
-        "valid": _parse_bool(first["calib_valid"]),
-        "source_format": "csv_serial",
-        "source_path": first.get("source_path", str(caminho)) or str(caminho),
-        "source_size_bytes": first.get("source_size_bytes", ""),
-        "received_at": first.get("received_at", ""),
+    samples = {
+        "t_ms":     np.array(t_ms_l, dtype=np.int64),
+        "ax":       np.array(ax_l,   dtype=np.int32),
+        "ay":       np.array(ay_l,   dtype=np.int32),
+        "az":       np.array(az_l,   dtype=np.int32),
+        "gx":       np.array(gx_l,   dtype=np.int32),
+        "gy":       np.array(gy_l,   dtype=np.int32),   # Ωp
+        "gz":       np.array(gz_l,   dtype=np.int32),
+        "n_samples": len(t_ms_l),
     }
 
-    samples = np.zeros(len(rows), dtype=SAMPLE_DTYPE)
-    for i, row in enumerate(rows):
-        samples["t_ms"][i] = int(float(row["t_ms"]))
-        samples["ax"][i] = int(float(row["ax_raw"]))
-        samples["ay"][i] = int(float(row["ay_raw"]))
-        samples["az"][i] = int(float(row["az_raw"]))
-        samples["gx"][i] = int(float(row["gx_raw"]))
-        samples["gy"][i] = int(float(row["gy_raw"]))
-        samples["gz"][i] = int(float(row["gz_raw"]))
-
     return calib, samples
 
 
-def carregar_aquisicao(caminho: str | Path) -> tuple[dict[str, Any], np.ndarray]:
-    """Carrega automaticamente .csv serial ou .bin original."""
-    caminho = Path(caminho)
-    suffix = caminho.suffix.lower()
-
-    if suffix == ".csv":
-        return carregar_csv_schema_serial(caminho)
-    if suffix == ".bin":
-        return carregar_bin(caminho)
-
-    raise ValueError(
-        f"Extensão não suportada: {suffix or '(sem extensão)'}. "
-        "Use .csv ou .bin."
-    )
-
-
-def converter_para_si(samples: np.ndarray, calib: dict[str, Any]) -> dict[str, np.ndarray]:
+def converter_para_si(samples, calib):
     """
-    Converte amostras brutas para unidades físicas.
+    Converte samples raw (ADC counts) para unidades SI.
 
-    Retorna:
-        t: tempo em segundos desde o início
-        ax, ay, az: aceleração em m/s²
-        gx, gy, gz: velocidade angular em °/s com bias subtraído
-        *_raw: sinais brutos originais
+    Parâmetros
+    ----------
+    samples : dict  (retornado por carregar_aquisicao)
+    calib   : dict  (retornado por carregar_aquisicao)
+
+    Retorna
+    -------
+    dict com:
+      t   (s)     — tempo a partir de zero
+      ax, ay, az  (g)    — aceleração
+      gx, gy, gz  (°/s) — velocidade angular  ← gy = Ωp (Falbriard)
+      amag (g)    — magnitude da aceleração
     """
-    if len(samples) == 0:
-        raise ValueError("Não há amostras para converter.")
+    gs  = calib["gyro_sens"]    # LSB/(°/s)
+    as_ = calib["accel_sens"]   # LSB/g
 
-    t = (samples["t_ms"].astype(np.float64) - float(samples["t_ms"][0])) / 1000.0
+    # Bias de giroscópio (subtraído antes da conversão)
+    gb = calib.get("gyro_bias", np.zeros(3))
 
-    g_to_ms2 = 9.80665
-    ax = samples["ax"].astype(np.float64) / ACCEL_SENSITIVITY_LSB_PER_G * g_to_ms2
-    ay = samples["ay"].astype(np.float64) / ACCEL_SENSITIVITY_LSB_PER_G * g_to_ms2
-    az = samples["az"].astype(np.float64) / ACCEL_SENSITIVITY_LSB_PER_G * g_to_ms2
+    t_ms = samples["t_ms"].astype(np.float64)
+    t    = (t_ms - t_ms[0]) / 1000.0   # segundos a partir de zero
 
-    gyro_bias = np.asarray(calib["gyro_bias_lsb"], dtype=np.float64)
-    gx = (samples["gx"].astype(np.float64) - gyro_bias[0]) / GYRO_SENSITIVITY_LSB_PER_DPS
-    gy = (samples["gy"].astype(np.float64) - gyro_bias[1]) / GYRO_SENSITIVITY_LSB_PER_DPS
-    gz = (samples["gz"].astype(np.float64) - gyro_bias[2]) / GYRO_SENSITIVITY_LSB_PER_DPS
+    ax_g  = (samples["ax"].astype(float) - calib["accel_offsets"][0]) / as_
+    ay_g  = (samples["ay"].astype(float) - calib["accel_offsets"][1]) / as_
+    az_g  = (samples["az"].astype(float) - calib["accel_offsets"][2]) / as_
+
+    gx_dps = (samples["gx"].astype(float) - gb[0]) / gs
+    gy_dps = (samples["gy"].astype(float) - gb[1]) / gs   # Ωp
+    gz_dps = (samples["gz"].astype(float) - gb[2]) / gs
+
+    amag = np.sqrt(ax_g**2 + ay_g**2 + az_g**2)
 
     return {
-        "t": t,
-        "ax": ax, "ay": ay, "az": az,
-        "gx": gx, "gy": gy, "gz": gz,
-        "t_ms": samples["t_ms"].astype(np.uint32),
-        "ax_raw": samples["ax"].astype(np.int16),
-        "ay_raw": samples["ay"].astype(np.int16),
-        "az_raw": samples["az"].astype(np.int16),
-        "gx_raw": samples["gx"].astype(np.int16),
-        "gy_raw": samples["gy"].astype(np.int16),
-        "gz_raw": samples["gz"].astype(np.int16),
+        "t":    t,
+        "ax":   ax_g,
+        "ay":   ay_g,
+        "az":   az_g,
+        "gx":   gx_dps,
+        "gy":   gy_dps,   # ← este é o Ωp usado pelo Falbriard
+        "gz":   gz_dps,
+        "amag": amag,
     }
 
 
-def diagnostico(calib: dict[str, Any], samples: np.ndarray) -> None:
-    """Imprime relatório básico de saúde da aquisição."""
-    print("=" * 60)
-    print("RELATÓRIO DO ARQUIVO")
-    print("=" * 60)
-    print(f"Formato               : {calib.get('source_format', 'desconhecido')}")
-    print(f"Origem                : {calib.get('source_path', '')}")
-    if calib.get("received_at"):
-        print(f"Recebido em           : {calib['received_at']}")
-    print(f"Amostras totais       : {len(samples)}")
-
-    duracao_s = (float(samples["t_ms"][-1]) - float(samples["t_ms"][0])) / 1000.0
-    print(f"Duração               : {duracao_s:.2f} s")
-    if duracao_s > 0 and len(samples) > 1:
-        taxa = (len(samples) - 1) / duracao_s
-        print(f"Taxa de amostragem    : {taxa:.1f} Hz (alvo: {SAMPLE_RATE_HZ:.0f} Hz)")
-
-    print()
-    print("CALIBRAÇÃO:")
-    print(f"  válida              : {calib['valid']}")
-    print(f"  gyro bias (LSB)     : {calib['gyro_bias_lsb']}")
-    print(f"  gravidade g_T (LSB) : {calib['gravity_T_lsb']}")
-
-    norma = np.linalg.norm(calib["gravity_T_lsb"])
-    print(f"  ‖g_T‖ medida        : {norma:.1f} LSB")
-    print("  esperado em ±8 g    : 4096 LSB ± 10%")
-    if not (3600 < norma < 4600):
-        print("  ⚠ ATENÇÃO: norma fora da faixa — checar calibração/orientação")
-
-    eixos = ["X", "Y", "Z"]
-    idx_vert = int(np.argmax(np.abs(calib["gravity_T_lsb"])))
-    sinal = "+" if calib["gravity_T_lsb"][idx_vert] > 0 else "-"
-    print(f"Eixo vertical do chip : {sinal}{eixos[idx_vert]}")
-    print("=" * 60)
+def porcentagem_saturacao(samples, eixo="gy"):
+    """
+    Calcula a porcentagem de amostras saturadas no eixo dado.
+    Saturação = |valor| ≥ 32760 (≈ full-scale de 16 bits).
+    Independente do range configurado — o ADC do MPU6050 é sempre 16 bits.
+    """
+    lim = 32760
+    arr = samples[eixo].astype(np.int64)
+    return 100.0 * float(np.sum(np.abs(arr) >= lim)) / len(arr)
 
 
-def plotar(dados: dict[str, np.ndarray], titulo: str = "Sinais"):
-    """Plot básico dos 6 sinais convertidos."""
-    fig, axes = plt.subplots(3, 2, figsize=(12, 7), sharex=True)
-    t = dados["t"]
-
-    axes[0, 0].plot(t, dados["ax"])
-    axes[0, 0].set_ylabel("ax (m/s²)")
-    axes[0, 0].grid(alpha=0.3)
-
-    axes[1, 0].plot(t, dados["ay"])
-    axes[1, 0].set_ylabel("ay (m/s²)")
-    axes[1, 0].grid(alpha=0.3)
-
-    axes[2, 0].plot(t, dados["az"])
-    axes[2, 0].set_ylabel("az (m/s²)")
-    axes[2, 0].set_xlabel("tempo (s)")
-    axes[2, 0].grid(alpha=0.3)
-
-    axes[0, 1].plot(t, dados["gx"])
-    axes[0, 1].set_ylabel("gx (°/s)")
-    axes[0, 1].grid(alpha=0.3)
-
-    axes[1, 1].plot(t, dados["gy"])
-    axes[1, 1].set_ylabel("gy (°/s) — PITCH/Ωp")
-    axes[1, 1].grid(alpha=0.3)
-
-    axes[2, 1].plot(t, dados["gz"])
-    axes[2, 1].set_ylabel("gz (°/s)")
-    axes[2, 1].set_xlabel("tempo (s)")
-    axes[2, 1].grid(alpha=0.3)
-
-    fig.suptitle(titulo)
-    fig.tight_layout()
-    return fig
+def estimar_fs(samples):
+    """Estima a taxa de amostragem real a partir dos timestamps."""
+    t_ms = samples["t_ms"]
+    dt = np.diff(t_ms.astype(np.float64))
+    dt = dt[dt > 0]
+    if not len(dt):
+        return float(SAMPLE_RATE_HZ)
+    fs = 1000.0 / float(np.median(dt))
+    return fs if np.isfinite(fs) and fs > 0 else float(SAMPLE_RATE_HZ)
 
 
-def exportar_csv_si(dados: dict[str, np.ndarray], caminho_saida: str | Path) -> None:
-    """Exporta sinais convertidos para um CSV de análise."""
-    caminho_saida = Path(caminho_saida)
-    with caminho_saida.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "t_s", "t_ms",
-            "ax_ms2", "ay_ms2", "az_ms2",
-            "gx_dps", "gy_dps", "gz_dps",
-            "ax_raw", "ay_raw", "az_raw", "gx_raw", "gy_raw", "gz_raw",
-        ])
-        for i in range(len(dados["t"])):
-            writer.writerow([
-                dados["t"][i], dados["t_ms"][i],
-                dados["ax"][i], dados["ay"][i], dados["az"][i],
-                dados["gx"][i], dados["gy"][i], dados["gz"][i],
-                dados["ax_raw"][i], dados["ay_raw"][i], dados["az_raw"][i],
-                dados["gx_raw"][i], dados["gy_raw"][i], dados["gz_raw"][i],
-            ])
-    print(f"CSV SI salvo em: {caminho_saida}")
+# ── Parsing interno ───────────────────────────────────────────────────────────
 
+def _parse_header(path):
+    """
+    Lê o cabeçalho do CSV (linhas com '#') e extrai configuração de hardware.
+    Se o cabeçalho estiver ausente ou incompleto, usa os defaults do firmware atual.
+    """
+    gyro_range    = 2000    # °/s — default do firmware v2 (GYRO_CONFIG=0x18)
+    accel_range   = 8       # g   — ACCEL_CONFIG=0x10
+    sample_rate   = SAMPLE_RATE_HZ
+    accel_offsets = np.zeros(3, dtype=float)
+    gyro_bias     = np.zeros(3, dtype=float)
+    header_found  = False
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Lê aquisição .csv serial ou .bin e plota/converte os sinais.")
-    parser.add_argument("arquivo", help="Arquivo .csv gerado pelo receptor serial ou .bin original")
-    parser.add_argument("--csv-si", action="store_true", help="Exporta CSV com sinais convertidos para unidades físicas")
-    parser.add_argument("--no-plot", action="store_true", help="Não abre janela de plot")
-    args = parser.parse_args()
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line.startswith("#"):
+                break
+            header_found = True
+            parts = line[1:].split()
+            if not parts:
+                continue
+            tag = parts[0].upper()
+            try:
+                if tag == "CALIB" and len(parts) >= 4:
+                    accel_offsets = np.array([float(parts[1]),
+                                              float(parts[2]),
+                                              float(parts[3])])
+                elif tag == "GYRO_BIAS" and len(parts) >= 4:
+                    gyro_bias = np.array([float(parts[1]),
+                                          float(parts[2]),
+                                          float(parts[3])])
+                elif tag == "GYRO_RANGE" and len(parts) >= 2:
+                    gyro_range = int(parts[1])
+                elif tag == "ACCEL_RANGE" and len(parts) >= 2:
+                    accel_range = int(parts[1])
+                elif tag == "SAMPLE_RATE" and len(parts) >= 2:
+                    sample_rate = int(parts[1])
+            except (ValueError, IndexError):
+                continue
 
-    caminho = Path(args.arquivo)
-    calib, samples = carregar_aquisicao(caminho)
-    diagnostico(calib, samples)
-    dados = converter_para_si(samples, calib)
+    gyro_sens  = _GYRO_SENS_TABLE.get(gyro_range,  GYRO_SENS_DEFAULT)
+    accel_sens = _ACCEL_SENS_TABLE.get(accel_range, ACCEL_SENS_DEFAULT)
 
-    if args.csv_si:
-        out_path = caminho.with_name(caminho.stem + "_si.csv")
-        exportar_csv_si(dados, out_path)
-
-    if not args.no_plot:
-        plotar(dados, titulo=f"Arquivo: {caminho.name}")
-        plt.show()
-
-
-if __name__ == "__main__":
-    main()
+    return {
+        "valid":          header_found,
+        "gyro_range_dps": gyro_range,
+        "accel_range_g":  accel_range,
+        "sample_rate":    sample_rate,
+        "gyro_sens":      gyro_sens,     # LSB/(°/s)
+        "accel_sens":     accel_sens,    # LSB/g
+        "accel_offsets":  accel_offsets,
+        "gyro_bias":      gyro_bias,
+    }
