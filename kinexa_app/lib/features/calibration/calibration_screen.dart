@@ -14,6 +14,7 @@ import '../../core/widgets/kinexa_scaffold.dart';
 import '../../core/widgets/kinexa_scroll_reveal.dart';
 import '../../overlays/calibration_positioning_overlay.dart';
 import '../../providers.dart';
+import '../../services/ble/ble_exception.dart';
 
 enum CalibUiState { ready, calibrating, success, failed }
 
@@ -27,6 +28,7 @@ class CalibrationScreen extends ConsumerStatefulWidget {
 class _CalibrationScreenState extends ConsumerState<CalibrationScreen> {
   CalibUiState _state = CalibUiState.ready;
   bool _openingOverlay = false;
+  String? _lastError;
 
   Future<void> _startCalibration() async {
     if (_state == CalibUiState.calibrating || _openingOverlay) return;
@@ -36,7 +38,10 @@ class _CalibrationScreenState extends ConsumerState<CalibrationScreen> {
       final ok = await showSensorPositioningOverlay(context);
       if (!ok || !mounted) return;
 
-      setState(() => _state = CalibUiState.calibrating);
+      setState(() {
+        _state = CalibUiState.calibrating;
+        _lastError = null;
+      });
       try {
         await ref.read(bleServiceProvider).calibrate();
         ref.read(collectionSessionProvider.notifier).markCalibrated();
@@ -47,8 +52,15 @@ class _CalibrationScreenState extends ConsumerState<CalibrationScreen> {
           await Future.delayed(const Duration(milliseconds: 1200));
           if (mounted) context.push('/metadata');
         }
-      } catch (_) {
-        if (mounted) setState(() => _state = CalibUiState.failed);
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _state = CalibUiState.failed;
+            _lastError = e is BleException
+                ? e.message
+                : 'Falha na calibração: $e';
+          });
+        }
       }
     } finally {
       _openingOverlay = false;
@@ -118,6 +130,7 @@ class _CalibrationScreenState extends ConsumerState<CalibrationScreen> {
                             const KinexaCalibrationImportantNote(),
                             _CalibrationActionArea(
                               state: _state,
+                              errorMessage: _lastError,
                               setupOnly: setupOnly,
                               onStart: _startCalibration,
                               onContinue: _finishSetupFlow,
@@ -209,10 +222,12 @@ class _CalibrationActionArea extends StatelessWidget {
     required this.state,
     required this.onStart,
     required this.setupOnly,
+    this.errorMessage,
     this.onContinue,
   });
 
   final CalibUiState state;
+  final String? errorMessage;
   final VoidCallback onStart;
   final bool setupOnly;
   final VoidCallback? onContinue;
@@ -249,6 +264,20 @@ class _CalibrationActionArea extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 20),
+        ],
+        if (state == CalibUiState.failed &&
+            errorMessage != null &&
+            errorMessage!.isNotEmpty) ...[
+          Text(
+            errorMessage!,
+            textAlign: TextAlign.center,
+            style: AppTextStyles.mono(
+              size: 11,
+              color: AppColors.textMuted,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 16),
         ],
         switch (state) {
           CalibUiState.ready => KinexaButton.primary(

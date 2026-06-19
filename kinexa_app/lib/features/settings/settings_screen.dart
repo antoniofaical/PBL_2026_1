@@ -16,7 +16,9 @@ import '../../core/widgets/kinexa_scroll_reveal.dart';
 import '../../data/models/device_model.dart';
 import '../../data/repositories/sync_repository.dart';
 import '../../overlays/sensor_search_overlay.dart';
+import '../../core/boot/app_boot.dart';
 import '../../providers.dart';
+import '../../router.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -32,6 +34,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   int _pending = 0;
   bool _online = false;
   bool _syncing = false;
+  String? _authUsername;
 
   @override
   void initState() {
@@ -49,6 +52,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _lastSync = await sync.lastSync();
     _online = !ref.read(offlineModeProvider) && await sync.isServerOnline();
     ref.read(serverOnlineProvider.notifier).state = _online;
+    _authUsername = ref.read(authUserProvider) ??
+        await ref.read(authRepositoryProvider).cachedUsername();
 
     if (!mounted) return;
     setState(() {
@@ -67,6 +72,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
       if (result.success) {
         ref.read(offlineModeProvider.notifier).state = false;
+      } else if (result.authRequired) {
+        authGate.value = false;
+        bootPhase.value = BootPhase.auth;
+        ref.read(authUserProvider.notifier).state = null;
+        if (mounted) context.go('/auth');
+        return;
       } else if (!result.skipped && mounted) {
         _showSyncFailedSnackBar(result);
       }
@@ -76,6 +87,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
+  }
+
+  Future<void> _logout() async {
+    await ref.read(authRepositoryProvider).logout();
+    authGate.value = false;
+    bootPhase.value = BootPhase.auth;
+    ref.read(authUserProvider.notifier).state = null;
+    ref.read(offlineModeProvider.notifier).state = false;
+    if (!mounted) return;
+    context.go('/auth');
   }
 
   void _showSyncFailedSnackBar(SyncAllResult result) {
@@ -266,6 +287,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     size: 32,
                     weight: FontWeight.w700,
                     letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 15),
+                _SettingsSection(
+                  icon: const Icon(
+                    Symbols.person,
+                    size: 16,
+                    color: Colors.white,
+                  ),
+                  title: 'CONTA',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _InfoField(
+                        label: 'Usuário',
+                        value: _authUsername ?? '—',
+                      ),
+                      const SizedBox(height: 20),
+                      _OutlineActionButton(
+                        label: 'SAIR',
+                        icon: Symbols.logout,
+                        onPressed: _logout,
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 15),

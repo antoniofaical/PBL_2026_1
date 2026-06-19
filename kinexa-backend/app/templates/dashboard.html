@@ -3,9 +3,17 @@
 {% block title %}Dashboard — Kinexa{% endblock %}
 
 {% block content %}
-{% if seeded %}
-<p class="flash-ok">Coleta simulada criada: <code>{{ seeded }}</code></p>
-{% endif %}
+
+<section class="kx-card card-soft">
+  <div class="section-header-row">
+    <h2 class="section-title section-title-sm">Sistema Kinexa</h2>
+    <a href="/fundamentacao" class="btn btn-outline btn-sm">Fundamentação →</a>
+  </div>
+  <p class="hint">
+    IMU no pé + app de campo + pipeline de análise para cadência, tempo de contato e tempo de voo.
+    Versão analítica: <code>2.0.0</code>.
+  </p>
+</section>
 
 <section class="section-block">
   <h2 class="section-title">Informações da base de dados</h2>
@@ -50,13 +58,5 @@
   {% else %}
   <p class="empty-state">Nenhuma coleta registrada ainda.</p>
   {% endif %}
-</section>
-
-<section class="card card-dev kx-card">
-  <h2 class="section-title section-title-sm">Dev (temporário)</h2>
-  <p class="hint">Insere uma coleta de exemplo no banco com CSV e eventos fictícios.</p>
-  <form method="post" action="/dev/seed-run">
-    <button type="submit" class="btn">+ Adicionar coleta simulada</button>
-  </form>
 </section>
 {% endblock %}

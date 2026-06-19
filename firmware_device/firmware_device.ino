@@ -37,7 +37,12 @@
  * Protocolo de transferência binária (Status + Data):
  *   XFER:START / ===BEGIN_LAST_RUN_BIN=== / PATH / SIZE / DATA_BEGIN
  *   <bytes binários em chunks na characteristic Data>
- *   DATA_END / ===END_LAST_RUN_BIN=== / XFER: OK
+ * Atualização v2.0.0 (2026-06) — merge PBL_IMU.ino:
+ *   - GYRO_CONFIG 0x18 (±2000 °/s, 16.4 LSB/(°/s)) — evita saturação em sprint
+ *   - DLPF 0x01 para ODR 1 kHz @ 500 Hz estável
+ *   - CalibData 28 bytes (6 floats + valid + pad) — compatível com app BLE
+ *   - Metadados HW na transferência: META:GYRO_RANGE / ACCEL_RANGE / SAMPLE_RATE
+ *   - Calibração com descarte de warm-up (50 amostras)
  * ============================================================================
  */
 
@@ -52,7 +57,8 @@
 // Identidade do device
 // ---------------------------------------------------------------------------
 static constexpr char DEVICE_ID[]  = "KINEXA_01";
-static constexpr char FW_VERSION[] = "1.0.4";
+static constexpr char FW_VERSION[] = "2.0.0";
+static constexpr char IMU_PROFILE_ID[] = "PBL_IMU_v2";
 
 // ---------------------------------------------------------------------------
 // Pinos
@@ -78,12 +84,25 @@ static constexpr uint8_t REG_CONFIG         = 0x1A;
 static constexpr uint8_t REG_GYRO_CONFIG    = 0x1B;
 static constexpr uint8_t REG_ACCEL_CONFIG   = 0x1C;
 static constexpr uint8_t REG_ACCEL_XOUT_H   = 0x3B;
+static constexpr uint8_t REG_INT_ENABLE   = 0x38;
+
+// Faixas MPU6050 — sincronizado com ler_dados.py / analisar_sesi.py v4
+static constexpr uint8_t GYRO_CONFIG_VALUE  = 0x18;  // ±2000 °/s (16.4 LSB/(°/s))
+static constexpr uint8_t ACCEL_CONFIG_VALUE = 0x10;  // ±8 g (4096 LSB/g)
+static constexpr uint8_t DLPF_CONFIG_VALUE  = 0x01;  // Gyro ODR 1 kHz → 500 Hz com SMPLRT_DIV=1
+static constexpr uint16_t GYRO_RANGE_DPS    = 2000;
+static constexpr uint8_t ACCEL_RANGE_G      = 8;
+static constexpr uint16_t SAMPLE_RATE_HZ    = 500;
+static constexpr float ACCEL_LSB_PER_G      = 4096.0f;
 
 // ---------------------------------------------------------------------------
 // Aquisição
 // ---------------------------------------------------------------------------
 static constexpr uint32_t SAMPLE_PERIOD_US = 2000;   // 500 Hz
 static constexpr uint16_t CALIB_SAMPLES   = 1500;   // ~3 s
+static constexpr uint16_t CALIB_DISCARD     = 50;     // warm-up pós-movimento (PBL_IMU)
+static constexpr uint32_t CALIB_MAX_MS    = 25000;  // fail-safe (I2C lento em USB fraco)
+static constexpr uint8_t  CALIB_I2C_RETRIES = 4;
 static constexpr uint16_t BUFFER_SIZE     = 200;
 
 // ---------------------------------------------------------------------------
@@ -120,6 +139,7 @@ enum XferPhase : uint8_t {
   XFER_HDR_BEGIN,
   XFER_HDR_PATH,
   XFER_HDR_SIZE,
+  XFER_HDR_META,
   XFER_HDR_DATA_BEGIN,
   XFER_SEND_PAYLOAD,
   XFER_POST_DRAIN,
@@ -139,11 +159,17 @@ struct Sample {
   int16_t gx, gy, gz;
 } __attribute__((packed));
 
+// Cabeçalho binário: 6 floats + valid + 3 bytes pad = 28 B (app + pbl_data/format.py)
 struct CalibData {
   float gx_bias, gy_bias, gz_bias;
   float g_T[3];
-  bool valid;
-} calib = {0, 0, 0, {0, 0, 0}, false};
+  uint8_t valid;
+  uint8_t _pad[3];
+} __attribute__((packed));
+
+static_assert(sizeof(CalibData) == 28, "CalibData deve ter 28 bytes para o parser BLE");
+
+static CalibData calib = {0, 0, 0, {0, 0, 0}, 0, {0, 0, 0}};
 
 struct Rgb {
   uint8_t r, g, b;
@@ -153,7 +179,9 @@ struct CalibAccum {
   double sax = 0, say = 0, saz = 0;
   double sgx = 0, sgy = 0, sgz = 0;
   uint16_t got = 0;
+  uint16_t seen = 0;
   uint32_t t_next_us = 0;
+  uint32_t started_ms = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -213,6 +241,7 @@ static void ledApplySolid(State s);
 static void ledTick();
 
 static void mpuWrite(uint8_t reg, uint8_t val);
+static uint8_t mpuReadReg(uint8_t reg);
 static bool mpuReadBurst(int16_t& ax, int16_t& ay, int16_t& az,
                          int16_t& gx, int16_t& gy, int16_t& gz);
 static bool mpuInit();
@@ -226,6 +255,7 @@ static bool bleIsReadyForXfer();
 static const char* stateTag(State s);
 static void notifyStatus(const char* msg);
 static void sendStatusResponse();
+static void notifyHardwareMeta();
 static void handleBleCommand(const char* raw);
 static void normalizeCommand(char* cmd, size_t cap);
 
@@ -294,9 +324,10 @@ static void ledSetColor(const Rgb& c) {
 static Rgb ledBlinkOnColor(State s) {
   switch (s) {
     case S_NEEDS_CALIBRATION:
-    case S_CALIBRATING:
     case S_TRANSFER:
       return LED_BLUE;
+    case S_CALIBRATING:
+      return {0, 0, 48};  // azul fraco — economiza corrente em USB OTG
     case S_ERROR:
       return LED_RED;
     default:
@@ -360,6 +391,15 @@ static void mpuWrite(uint8_t reg, uint8_t val) {
   Wire.endTransmission(true);
 }
 
+static uint8_t mpuReadReg(uint8_t reg) {
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return 0xFF;
+  if (Wire.requestFrom(MPU_ADDR, (uint8_t)1, (uint8_t)true) != 1) return 0xFF;
+  if (!Wire.available()) return 0xFF;
+  return Wire.read();
+}
+
 static bool mpuReadBurst(int16_t& ax, int16_t& ay, int16_t& az,
                          int16_t& gx, int16_t& gy, int16_t& gz) {
   Wire.beginTransmission(MPU_ADDR);
@@ -387,16 +427,23 @@ static bool mpuInit() {
   mpuWrite(REG_PWR_MGMT_1, 0x01);
   delay(50);
 
+  // DLPF=0x01: gyro ODR 1 kHz; SMPLRT_DIV=1 → 500 Hz (PBL_IMU v2)
+  mpuWrite(REG_CONFIG, DLPF_CONFIG_VALUE);
   mpuWrite(REG_SMPLRT_DIV, 1);
-  mpuWrite(REG_CONFIG, 0x03);
-  mpuWrite(REG_GYRO_CONFIG, 0x10);
-  mpuWrite(REG_ACCEL_CONFIG, 0x10);
+  mpuWrite(REG_GYRO_CONFIG, GYRO_CONFIG_VALUE);
+  mpuWrite(REG_ACCEL_CONFIG, ACCEL_CONFIG_VALUE);
+  mpuWrite(REG_INT_ENABLE, 0x00);
 
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(0x75);
   if (Wire.endTransmission(false) != 0) return false;
   Wire.requestFrom(MPU_ADDR, (uint8_t)1, (uint8_t)true);
-  return Wire.available() && Wire.read() == 0x68;
+  if (!Wire.available() || Wire.read() != 0x68) return false;
+
+  const uint8_t gyroCfg = mpuReadReg(REG_GYRO_CONFIG);
+  logSerialf("MPU: GYRO_CONFIG=0x%02X (esperado 0x%02X, ±%u°/s)",
+             gyroCfg, GYRO_CONFIG_VALUE, (unsigned)GYRO_RANGE_DPS);
+  return gyroCfg == GYRO_CONFIG_VALUE;
 }
 
 static bool mpuInitWithRetry(uint8_t attempts) {
@@ -496,7 +543,8 @@ static bool bleIsReadyForXfer() {
 
 static void bleInit() {
   NimBLEDevice::init(DEVICE_ID);
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+  // P6 em vez de P9 — USB OTG do celular não aguenta pico de TX BLE + IMU @ 500 Hz.
+  NimBLEDevice::setPower(ESP_PWR_LVL_P6);
 
   bleServer = NimBLEDevice::createServer();
   bleServer->setCallbacks(&bleServerCb);
@@ -550,6 +598,18 @@ static void notifyStatus(const char* msg) {
   bleNotifyStatus(msg);
 }
 
+static void notifyHardwareMeta() {
+  char line[72];
+  snprintf(line, sizeof(line), "IMU:%s", IMU_PROFILE_ID);
+  notifyStatus(line);
+  snprintf(line, sizeof(line), "HW:GYRO_RANGE=%u", (unsigned)GYRO_RANGE_DPS);
+  notifyStatus(line);
+  snprintf(line, sizeof(line), "HW:ACCEL_RANGE=%u", (unsigned)ACCEL_RANGE_G);
+  notifyStatus(line);
+  snprintf(line, sizeof(line), "HW:SAMPLE_RATE=%u", (unsigned)SAMPLE_RATE_HZ);
+  notifyStatus(line);
+}
+
 static void sendStatusResponse() {
   notifyStatus(stateTag(state));
 
@@ -561,6 +621,7 @@ static void sendStatusResponse() {
   notifyStatus(line);
 
   notifyStatus(calib.valid ? "CALIB:OK" : "CALIB:INVALID");
+  notifyHardwareMeta();
 }
 
 static void normalizeCommand(char* cmd, size_t cap) {
@@ -653,6 +714,7 @@ static void handleBleCommand(const char* raw) {
 static void calibReset() {
   calibAccum = CalibAccum{};
   calibAccum.t_next_us = micros();
+  calibAccum.started_ms = millis();
 }
 
 static bool calibTick() {
@@ -664,7 +726,15 @@ static bool calibTick() {
   calibAccum.t_next_us += SAMPLE_PERIOD_US;
 
   int16_t ax, ay, az, gx, gy, gz;
-  if (!mpuReadBurst(ax, ay, az, gx, gy, gz)) return false;
+  bool ok = false;
+  for (uint8_t attempt = 0; attempt < CALIB_I2C_RETRIES && !ok; attempt++) {
+    ok = mpuReadBurst(ax, ay, az, gx, gy, gz);
+    if (!ok) delayMicroseconds(250);
+  }
+  if (!ok) return false;
+
+  calibAccum.seen++;
+  if (calibAccum.seen <= CALIB_DISCARD) return false;
 
   calibAccum.sax += ax;
   calibAccum.say += ay;
@@ -690,16 +760,21 @@ static void calibFinalize() {
       calib.g_T[1] * calib.g_T[1] +
       calib.g_T[2] * calib.g_T[2]);
 
+  const float ax_off = calib.g_T[0];
+  const float ay_off = calib.g_T[1];
+  const float az_off = calib.g_T[2] - ACCEL_LSB_PER_G;
+
   logSerialf("CALIB: gyro_bias = (%.1f, %.1f, %.1f)", calib.gx_bias, calib.gy_bias, calib.gz_bias);
   logSerialf("CALIB: |g_T| = %.1f LSB", gnorm);
+  logSerialf("CALIB: accel_off = (%.1f, %.1f, %.1f) LSB", ax_off, ay_off, az_off);
 
   if (gnorm < 3000.0f || gnorm > 5000.0f) {
-    calib.valid = false;
+    calib.valid = 0;
     logSerial("CALIB: FAIL — gravity norm out of range");
     return;
   }
 
-  calib.valid = true;
+  calib.valid = 1;
   logSerial("CALIB: OK");
 }
 
@@ -709,7 +784,7 @@ static void startCalibration() {
     return;
   }
 
-  calib.valid = false;
+  calib.valid = 0;
   logSerial("CALIB: start requested by app");
   setState(S_CALIBRATING);
 }
@@ -743,7 +818,7 @@ static bool startRecording() {
   if (rec_file) rec_file.close();
   rec_file = LittleFS.open(REC_PATH, "w");
   if (!rec_file) return false;
-  rec_file.write((const uint8_t*)&calib, sizeof(calib));
+  rec_file.write((const uint8_t*)&calib, sizeof(CalibData));
   buf_w = 0;
   return true;
 }
@@ -839,7 +914,7 @@ static void forceRecalibration() {
     notifyStatus("XFER:ABORTED");
   }
 
-  calib.valid = false;
+  calib.valid = 0;
   notifyStatus("BUTTON:FORCE_RECALIBRATION");
   setState(S_NEEDS_CALIBRATION);
 }
@@ -1030,6 +1105,19 @@ static void xferTick() {
       char line[32];
       snprintf(line, sizeof(line), "SIZE:%u", (unsigned)xferTotalBytes);
       if (!bleNotifyStatus(line)) return;
+      xferScheduleWait(XFER_HDR_LINE_DELAY_MS, XFER_HDR_META);
+      break;
+    }
+
+    case XFER_HDR_META: {
+      char line[96];
+      snprintf(line, sizeof(line),
+               "META:IMU=%s;GYRO_RANGE=%u;ACCEL_RANGE=%u;SAMPLE_RATE=%u",
+               IMU_PROFILE_ID,
+               (unsigned)GYRO_RANGE_DPS,
+               (unsigned)ACCEL_RANGE_G,
+               (unsigned)SAMPLE_RATE_HZ);
+      if (!bleNotifyStatus(line)) return;
       xferScheduleWait(XFER_HDR_LINE_DELAY_MS, XFER_HDR_DATA_BEGIN);
       break;
     }
@@ -1109,16 +1197,22 @@ static void onStateEnter(State entered, State /*previous*/) {
 
   switch (entered) {
     case S_NEEDS_CALIBRATION:
-      calib.valid = false;
+      calib.valid = 0;
+      Wire.setClock(400000);
+      NimBLEDevice::setPower(ESP_PWR_LVL_P6);
       ledArmBlink(S_NEEDS_CALIBRATION);
       break;
 
     case S_CALIBRATING:
+      Wire.setClock(100000);
+      NimBLEDevice::setPower(ESP_PWR_LVL_P3);
       calibReset();
       ledArmBlink(S_CALIBRATING);
       break;
 
     case S_READY:
+      Wire.setClock(400000);
+      NimBLEDevice::setPower(ESP_PWR_LVL_P6);
       ledApplySolid(S_READY);
       break;
 
@@ -1153,7 +1247,9 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println(F("\n=== Kinexa firmware ==="));
-  logSerialf("BOOT: FW %s device %s", FW_VERSION, DEVICE_ID);
+  logSerialf("BOOT: FW %s (%s) device %s", FW_VERSION, IMU_PROFILE_ID, DEVICE_ID);
+  logSerialf("BOOT: MPU target gyro ±%u dps, accel ±%u g, %u Hz",
+             (unsigned)GYRO_RANGE_DPS, (unsigned)ACCEL_RANGE_G, (unsigned)SAMPLE_RATE_HZ);
 
   pinMode(PIN_BUTTON, INPUT_PULLUP);
   ledInit();
@@ -1179,7 +1275,7 @@ void setup() {
   }
   logSerial("BOOT: LittleFS OK");
 
-  calib.valid = false;
+  calib.valid = 0;
   // state já inicia como S_NEEDS_CALIBRATION — forçar entrada para acionar LED/BLE
   state = S_ERROR;
   setState(S_NEEDS_CALIBRATION);
@@ -1199,11 +1295,17 @@ void loop() {
       break;
 
     case S_CALIBRATING:
-      if (calibTick()) {
+      if (millis() - calibAccum.started_ms >= CALIB_MAX_MS) {
+        logSerial("CALIB: FAIL — wall timeout (I2C/USB?)");
+        notifyStatus("CALIB:FAIL");
+        setState(S_NEEDS_CALIBRATION);
+      } else if (calibTick()) {
         calibFinalize();
         if (calib.valid) {
-          notifyStatus("CALIB:OK");
+          // STATE:READY via onStateEnter; CALIB:OK depois (sem notifyHardwareMeta —
+          // burst de 4 NOTIFYs entre as duas linhas fazia o Android perder STATE:READY).
           setState(S_READY);
+          notifyStatus("CALIB:OK");
         } else {
           notifyStatus("CALIB:FAIL");
           setState(S_NEEDS_CALIBRATION);

@@ -91,11 +91,14 @@ class KinexaBleProtocol {
   static KinexaStatusSnapshot snapshotFromLog(List<String> log) =>
       parseStatusLines(log);
 
-  /// Aceita firmware 1.0.x conforme `AppConstants.firmwareCompat`.
+  /// Aceita firmware 1.0.x e 2.0.x (PBL_IMU v2).
   static bool isFirmwareCompatible(String version) {
     final normalized = version.trim().toLowerCase().replaceFirst('v', '');
     final parts = normalized.split('.');
     if (parts.length < 2) return false;
-    return parts[0] == '1' && parts[1] == '0';
+    final major = int.tryParse(parts[0]);
+    final minor = int.tryParse(parts[1]);
+    if (major == null || minor == null) return false;
+    return (major == 1 || major == 2) && minor == 0;
   }
 }

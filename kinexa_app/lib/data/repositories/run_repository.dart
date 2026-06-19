@@ -35,6 +35,7 @@ class RunRepository {
         await _dao.upsertRun(
           run.copyWith(
             syncStatus: SyncStatus.synced,
+            clearCsvContent: true,
             sampleCount: result['sample_count'] as int? ?? run.sampleCount,
           ),
         );

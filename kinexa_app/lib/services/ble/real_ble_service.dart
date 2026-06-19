@@ -279,13 +279,8 @@ class RealBleService implements BleService {
     final mark = _statusWatermark;
     await _sendCommand(KinexaBleConfig.cmdCalibrate);
 
-    final calibOk = await _waitForResponseLine(
-      'CALIB:OK',
-      afterWatermark: mark,
-      timeout: KinexaBleConfig.calibrateTimeout,
-      sniff: true,
-    );
-    if (!calibOk) {
+    final ok = await _confirmCalibrationSuccess(afterWatermark: mark);
+    if (!ok) {
       final recent = _linesSince(mark);
       if (recent.contains('CALIB:FAIL')) {
         throw BleException(
@@ -294,22 +289,71 @@ class RealBleService implements BleService {
       }
       final err = _firstErrorLineIn(recent);
       throw BleException(
-        err ?? 'Timeout na calibração — mantenha o sensor parado e tente novamente.',
+        err ?? 'Timeout na calibração — use power bank ou notebook para alimentar o sensor.',
       );
-    }
-
-    final ready = await _waitForResponseLine(
-      'STATE:READY',
-      afterWatermark: mark,
-      timeout: KinexaBleConfig.commandResponseTimeout,
-      sniff: true,
-    );
-    if (!ready) {
-      throw BleException('Sensor não entrou em READY após calibração.');
     }
 
     _device = _device!.copyWith(state: DeviceState.ready);
     _log('CALIB:OK STATE:READY');
+  }
+
+  /// Firmware envia `CALIB:OK` e `STATE:READY` em NOTIFYs separados; Android
+  /// pode perder um deles (comum com USB OTG alimentando o ESP32). Aceita NOTIFY
+  /// ou confirma via comando STATUS (READ + NOTIFY).
+  Future<bool> _confirmCalibrationSuccess({required int afterWatermark}) async {
+    bool detected(List<String> lines) {
+      if (lines.contains('CALIB:FAIL')) return false;
+      if (lines.contains('CALIB:OK') || lines.contains('STATE:READY')) {
+        return true;
+      }
+      final snap = KinexaBleProtocol.parseStatusLines(lines);
+      return snap.calibrated && snap.state == DeviceState.ready;
+    }
+
+    bool readyViaStatus(KinexaStatusSnapshot snapshot) =>
+        snapshot.state == DeviceState.ready && snapshot.calibrated;
+
+    if (detected(_linesSince(afterWatermark))) return true;
+
+    final deadline = DateTime.now().add(KinexaBleConfig.calibrateTimeout);
+    var lastStatusPoll = DateTime.fromMillisecondsSinceEpoch(0);
+
+    while (DateTime.now().isBefore(deadline)) {
+      if (detected(_linesSince(afterWatermark))) return true;
+
+      final now = DateTime.now();
+      if (now.difference(lastStatusPoll) >= const Duration(seconds: 2)) {
+        lastStatusPoll = now;
+        try {
+          final snapshot = await _queryStatus();
+          if (readyViaStatus(snapshot)) {
+            _log('calib confirm via STATUS poll');
+            return true;
+          }
+        } catch (e) {
+          _log('calib STATUS poll failed: $e');
+        }
+      }
+
+      await Future.wait([
+        _sniffStatusCharacteristic(const Duration(milliseconds: 80)),
+        _drainStatusNotifications(const Duration(milliseconds: 80)),
+      ]);
+    }
+
+    if (detected(_linesSince(afterWatermark))) return true;
+
+    try {
+      final snapshot = await _queryStatus();
+      if (readyViaStatus(snapshot)) {
+        _log('calib confirm via final STATUS poll');
+        return true;
+      }
+    } catch (e) {
+      _log('calib final STATUS poll failed: $e');
+    }
+
+    return false;
   }
 
   @override

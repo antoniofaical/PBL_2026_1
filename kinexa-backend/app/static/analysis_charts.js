@@ -4,22 +4,31 @@ const KX_CHART_THEME = {
   font: { color: "#ffffff", family: "JetBrains Mono, Consolas, monospace", size: 11 },
   xaxis: { gridcolor: "rgba(255,255,255,0.06)", zerolinecolor: "rgba(255,255,255,0.1)" },
   yaxis: { gridcolor: "rgba(255,255,255,0.06)", zerolinecolor: "rgba(255,255,255,0.1)" },
-  legend: { bgcolor: "rgba(0,0,0,0)", orientation: "h", y: 1.12 },
-  margin: { l: 52, r: 20, t: 44, b: 44 },
+  legend: { bgcolor: "rgba(0,0,0,0)", orientation: "h", y: 1.14 },
+  margin: { l: 52, r: 20, t: 40, b: 44 },
 };
 
 const EVENT_COLORS = {
   initial_contact: "#E30613",
-  toe_off: "#FF434E",
+  toe_off: "#FF8C00",
   mid_swing: "#F1C40F",
   manual: "#2ECC71",
+  manual_marker: "#2ECC71",
 };
 
-const QUALITY_LABELS = {
-  good: "Boa",
-  acceptable: "Aceitável",
-  poor: "Ruim",
-  unknown: "—",
+const EVENT_LABELS = {
+  initial_contact: "Contato inicial",
+  toe_off: "Retirada do pé",
+  mid_swing: "Meio do balanço",
+  manual: "Marcação manual",
+  manual_marker: "Marcação manual",
+};
+
+const DETECTION_STATUS_LABELS = {
+  ok: "OK",
+  no_metrics: "Sem métricas",
+  insufficient_peaks: "Poucos ciclos",
+  low_confidence: "Baixa confiança",
 };
 
 const MIN_WINDOW_S = 3;
@@ -61,21 +70,46 @@ function xPixelToData(plotDiv, px) {
   return range[0] + ratio * span;
 }
 
-function eventShapes(events, tOriginMs) {
-  const origin = tOriginMs || 0;
-  return events.map((ev) => {
-    const tSec = (ev.t_ms - origin) / 1000;
-    const color = EVENT_COLORS[ev.type] || EVENT_COLORS[ev.source] || "#A0A0A0";
-    return {
-      type: "line",
-      x0: tSec,
-      x1: tSec,
-      y0: 0,
-      y1: 1,
-      yref: "paper",
-      line: { color, width: 1.5, dash: ev.source === "manual" ? "dot" : "solid" },
-    };
-  });
+function fmt1(n) {
+  return Number(n).toFixed(1);
+}
+
+function fmt2(n) {
+  return Number(n).toFixed(2);
+}
+
+function fmt3(n) {
+  return Number(n).toFixed(3);
+}
+
+function eventLabel(type) {
+  return EVENT_LABELS[type] || type.replace(/_/g, " ");
+}
+
+function formatMeanStd(mean, std, unit = "", decimals = 0) {
+  if (mean == null) return "—";
+  if (decimals <= 0) {
+    const m = Math.round(Number(mean));
+    if (std != null && Number(std) > 0) return `${m} ± ${Math.round(Number(std))}${unit}`;
+    return `${m}${unit}`;
+  }
+  const m = Number(mean).toFixed(decimals);
+  if (std != null && Number(std) > 0) return `${m} ± ${Number(std).toFixed(decimals)}${unit}`;
+  return `${m}${unit}`;
+}
+
+function nearestIndex(tArr, tSec) {
+  if (!tArr.length) return 0;
+  let best = 0;
+  let bestDist = Math.abs(tArr[0] - tSec);
+  for (let i = 1; i < tArr.length; i += 1) {
+    const d = Math.abs(tArr[i] - tSec);
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  return best;
 }
 
 function windowShapes(startS, endS, recEndS) {
@@ -120,33 +154,116 @@ function windowShapes(startS, endS, recEndS) {
   return shapes;
 }
 
-function allShapes(events, windowSel, tOriginMs, recEndS) {
+function saturationLimitShapes(rangeDps, tMin, tMax) {
+  if (!rangeDps || !Number.isFinite(rangeDps)) return [];
+  const base = {
+    type: "line",
+    x0: tMin,
+    x1: tMax,
+    line: { color: "rgba(241, 196, 15, 0.65)", width: 1.2, dash: "dash" },
+    layer: "below",
+  };
   return [
-    ...windowShapes(windowSel.startS, windowSel.endS, recEndS),
-    ...eventShapes(events, tOriginMs),
+    { ...base, y0: rangeDps, y1: rangeDps },
+    { ...base, y0: -rangeDps, y1: -rangeDps },
   ];
 }
 
-function baseLayout(title, events, windowSel, tOriginMs, recEndS) {
-  return {
-    ...KX_CHART_THEME,
-    title: { text: title, font: { size: 12, color: "#aaaaaa" } },
-    shapes: allShapes(events, windowSel, tOriginMs, recEndS),
-    hovermode: "x unified",
-    dragmode: "zoom",
+function chartShapes(windowSel, recEndS, chartData) {
+  const t = chartData.t || [];
+  const tMin = t.length ? t[0] : windowSel.startS;
+  const tMax = t.length ? t[t.length - 1] : windowSel.endS;
+  return [
+    ...windowShapes(windowSel.startS, windowSel.endS, recEndS),
+    ...saturationLimitShapes(chartData.gyro_range_dps, tMin, tMax),
+  ];
+}
+
+function eventMarkerTraces(events, chartData) {
+  const t = chartData.t;
+  const axis = chartData.detection_axis || "gy";
+  const ySeries = chartData.gyro[axis];
+  const groups = {
+    initial_contact: { x: [], y: [], text: [] },
+    toe_off: { x: [], y: [], text: [] },
+    mid_swing: { x: [], y: [], text: [] },
+    manual: { x: [], y: [], text: [] },
   };
+
+  const origin = chartData.t_origin_ms || 0;
+  for (const ev of events) {
+    const tSec = (ev.t_ms - origin) / 1000;
+    const idx = nearestIndex(t, tSec);
+    const y = ySeries[idx];
+    const bucket = ev.source === "manual" ? "manual" : ev.type;
+    const g = groups[bucket] || groups.manual;
+    g.x.push(tSec);
+    g.y.push(y);
+    g.text.push(eventLabel(ev.type));
+  }
+
+  const traces = [];
+  const specs = [
+    ["initial_contact", "triangle-down", 11],
+    ["toe_off", "square", 9],
+    ["mid_swing", "triangle-up", 11],
+    ["manual", "diamond", 10],
+  ];
+  for (const [key, symbol, size] of specs) {
+    const g = groups[key];
+    if (!g.x.length) continue;
+    traces.push({
+      x: g.x,
+      y: g.y,
+      mode: "markers",
+      name: EVENT_LABELS[key],
+      marker: {
+        color: EVENT_COLORS[key],
+        size,
+        symbol,
+        line: { color: "#121212", width: 1 },
+      },
+      text: g.text,
+      hovertemplate: "%{text}<br>%{x:.3f} s · %{y:.1f} °/s<extra></extra>",
+      showlegend: true,
+    });
+  }
+  return traces;
 }
 
-function fmt1(n) {
-  return Number(n).toFixed(1);
+function yRangeForSeries(yArr, satRangeDps) {
+  if (!yArr.length) return undefined;
+  let ymin = Infinity;
+  let ymax = -Infinity;
+  for (const v of yArr) {
+    if (!Number.isFinite(v)) continue;
+    ymin = Math.min(ymin, v);
+    ymax = Math.max(ymax, v);
+  }
+  if (!Number.isFinite(ymin)) return undefined;
+  if (satRangeDps) {
+    ymin = Math.min(ymin, -satRangeDps);
+    ymax = Math.max(ymax, satRangeDps);
+  }
+  const span = ymax - ymin;
+  const pad = Math.max(25, span * 0.12 || 25);
+  return [ymin - pad, ymax + pad];
 }
 
-function fmt2(n) {
-  return Number(n).toFixed(2);
-}
-
-function fmt3(n) {
-  return Number(n).toFixed(3);
+function updateSatMeter(pct) {
+  const fill = document.getElementById("sat-meter-fill");
+  const label = document.getElementById("stat-sat");
+  const val = pct != null ? Math.max(0, Math.min(100, Number(pct))) : 0;
+  if (fill) {
+    const width = Math.min(100, val * 20);
+    fill.style.width = `${width}%`;
+    fill.classList.toggle("sat-meter-warn", val > 2);
+  }
+  if (label) {
+    const rangeEl = document.getElementById("stat-sat-range");
+    const rangeText = rangeEl?.textContent?.trim() || "±1000 °/s";
+    label.textContent = `${val}% @ ${rangeText}`;
+  }
 }
 
 function isFullWindow(startS, endS, recStartS, recEndS) {
@@ -180,6 +297,8 @@ function updateSummary(analysis) {
   const gct = analysis.gct;
   const det = analysis.detection || {};
   const win = analysis.window || {};
+  const flt = analysis.flight_time;
+  const lit = analysis.literature_validation;
 
   const set = (id, val) => {
     const el = document.getElementById(id);
@@ -188,24 +307,21 @@ function updateSummary(analysis) {
 
   set("stat-duration", q.duration_s != null ? fmt1(q.duration_s) : "—");
   set("stat-samples", q.sample_count ?? "—");
-  set("stat-fs", q.mean_fs_hz != null ? Number(q.mean_fs_hz).toFixed(1) : "—");
-  set("stat-cadence", cad?.cadence_spm ?? "—");
-  set("stat-gct", gct?.mean_ms != null ? Math.round(gct.mean_ms) : "—");
-
-  const qualEl = document.getElementById("stat-quality");
-  if (qualEl) {
-    qualEl.textContent = QUALITY_LABELS[q.quality_status] || "—";
-    qualEl.className = `stat-badge stat-badge-${q.quality_status || "unknown"}`;
-  }
-  set("stat-gaps", `Qualidade · gaps ${q.gap_count ?? 0}`);
+  const gapsEl = document.getElementById("stat-gaps");
+  if (gapsEl) gapsEl.textContent = q.gap_count ?? "0";
+  set("stat-cadence", cad ? formatMeanStd(cad.cadence_spm, cad.cadence_std_spm, " spm") : "—");
+  set("stat-gct", gct?.mean_ms != null ? formatMeanStd(gct.mean_ms, gct.std_ms, " ms") : "—");
+  set("stat-flt", flt?.mean_ms != null ? formatMeanStd(flt.mean_ms, flt.std_ms, " ms") : "—");
+  updateSatMeter(q.gyro_saturation_pct);
 
   const badge = document.getElementById("window-mode-badge");
   if (badge) badge.textContent = win.is_windowed ? "Trecho selecionado" : "Coleta completa";
 
   set("det-axis", det.axis ?? "—");
-  set("det-status", det.status ?? "—");
+  set("det-status", DETECTION_STATUS_LABELS[det.status] || det.status || "—");
   set("det-confidence", det.confidence != null ? `${Math.round(det.confidence * 100)}%` : "—");
   set("det-midswing", det.mid_swing_count ?? "—");
+  set("det-midswing-raw", det.mid_swing_count_raw ?? "—");
   set("det-steps", cad?.steps_detected ?? "—");
 
   const axisLabel = document.getElementById("detection-axis-label");
@@ -213,39 +329,52 @@ function updateSummary(analysis) {
 
   const gctWarn = document.getElementById("gct-warn");
   if (gctWarn) gctWarn.hidden = !(gct && gct.status === "low_confidence");
+
+  if (lit && cad) {
+    const litCad = document.getElementById("lit-cadence-val");
+    if (litCad) litCad.textContent = formatMeanStd(cad.cadence_spm, cad.cadence_std_spm, " spm");
+    const litGct = document.getElementById("lit-gct-val");
+    if (litGct && gct) litGct.textContent = formatMeanStd(gct.mean_ms, gct.std_ms, " ms");
+    const litFlt = document.getElementById("lit-flt-val");
+    if (litFlt && flt) litFlt.textContent = formatMeanStd(flt.mean_ms, flt.std_ms, " ms");
+  }
 }
 
-function renderEventsTable(events) {
-  const section = document.getElementById("events-content");
-  if (!section) return;
-
+function renderEventTableBody(events) {
   if (!events.length) {
-    section.innerHTML =
-      '<p class="empty-state" id="events-empty">Nenhum evento detectado no trecho — sinal pode não permitir detecção confiável.</p>';
-    return;
+    return '<p class="empty-state">Nenhum evento nesta categoria.</p>';
   }
-
   const rows = events
     .map((ev) => {
       const conf = ev.confidence != null ? `${Math.round(ev.confidence * 100)}%` : "—";
       return `<tr>
-        <td><code>${ev.type}</code></td>
-        <td>${ev.t_ms}</td>
+        <td>${eventLabel(ev.type)}</td>
         <td>${fmt3(ev.t_ms / 1000)}</td>
         <td>${conf}</td>
-        <td><span class="badge badge-${ev.source}">${ev.source}</span></td>
       </tr>`;
     })
     .join("");
-
-  section.innerHTML = `<div class="table-wrap">
+  return `<div class="table-wrap">
     <table class="data-table">
       <thead>
-        <tr><th>Tipo</th><th>ms</th><th>s</th><th>Conf.</th><th>Fonte</th></tr>
+        <tr><th>Tipo</th><th>Tempo (s)</th><th>Conf.</th></tr>
       </thead>
-      <tbody id="events-tbody">${rows}</tbody>
+      <tbody>${rows}</tbody>
     </table>
   </div>`;
+}
+
+function renderEventsTables(events) {
+  const auto = events.filter((e) => e.source === "auto");
+  const manual = events.filter((e) => e.source === "manual");
+  const autoEl = document.getElementById("events-auto-content");
+  const manualEl = document.getElementById("events-manual-content");
+  const autoCount = document.getElementById("events-auto-count");
+  const manualCount = document.getElementById("events-manual-count");
+  if (autoEl) autoEl.innerHTML = renderEventTableBody(auto);
+  if (manualEl) manualEl.innerHTML = renderEventTableBody(manual);
+  if (autoCount) autoCount.textContent = `(${auto.length})`;
+  if (manualCount) manualCount.textContent = `(${manual.length})`;
 }
 
 function savedAxisRanges(plotDiv) {
@@ -265,25 +394,58 @@ async function refreshChart(events, windowSel, chartData, preserveZoom = false) 
   const t = chartData.t;
   const recEndS = t.length ? t[t.length - 1] : windowSel.endS;
   const axis = chartData.detection_axis || "gy";
-  const axisLabel = axis === "gy" ? "gy (Ωp)" : axis;
+  const axisLabel = axis === "gy" ? "Ωp (gy)" : axis;
 
   const traces = [
-    { x: t, y: chartData.gyro[axis], name: axisLabel, line: { color: "#E30613", width: 1.5 } },
+    {
+      x: t,
+      y: chartData.gyro[axis],
+      name: axisLabel,
+      line: { color: "#E30613", width: 1.5 },
+    },
   ];
   if (axis !== "gx") {
-    traces.push({ x: t, y: chartData.gyro.gx, name: "gx", line: { color: "rgba(255,118,118,0.45)", width: 1 } });
+    traces.push({
+      x: t,
+      y: chartData.gyro.gx,
+      name: "gx",
+      visible: "legendonly",
+      line: { color: "rgba(255,118,118,0.45)", width: 1 },
+    });
   }
   if (axis !== "gy") {
-    traces.push({ x: t, y: chartData.gyro.gy, name: "gy", line: { color: "rgba(255,67,78,0.45)", width: 1 } });
+    traces.push({
+      x: t,
+      y: chartData.gyro.gy,
+      name: "gy",
+      visible: "legendonly",
+      line: { color: "rgba(255,67,78,0.45)", width: 1 },
+    });
   }
   if (axis !== "gz") {
-    traces.push({ x: t, y: chartData.gyro.gz, name: "gz", line: { color: "rgba(155,89,182,0.45)", width: 1 } });
+    traces.push({
+      x: t,
+      y: chartData.gyro.gz,
+      name: "gz",
+      visible: "legendonly",
+      line: { color: "rgba(155,89,182,0.45)", width: 1 },
+    });
   }
+  traces.push(...eventMarkerTraces(events, chartData));
 
   const zoom = preserveZoom ? savedAxisRanges(plotDiv) : { xaxis: {}, yaxis: {} };
+  const satRange = chartData.gyro_range_dps || 1000;
+  const yAuto = preserveZoom && zoom.yaxis.range
+    ? {}
+    : { range: yRangeForSeries(chartData.gyro[axis], satRange) };
+
   const layout = {
-    ...baseLayout("Velocidade angular (°/s) — método Falbriard", events, windowSel, chartData.t_origin_ms, recEndS),
-    yaxis: { ...KX_CHART_THEME.yaxis, title: "°/s", ...zoom.yaxis },
+    ...KX_CHART_THEME,
+    title: { text: "Velocidade angular (°/s)", font: { size: 12, color: "#aaaaaa" } },
+    shapes: chartShapes(windowSel, recEndS, chartData),
+    hovermode: "x unified",
+    dragmode: "zoom",
+    yaxis: { ...KX_CHART_THEME.yaxis, title: "°/s", ...yAuto, ...zoom.yaxis },
     xaxis: { ...KX_CHART_THEME.xaxis, title: "tempo (s)", fixedrange: false, ...zoom.xaxis },
   };
 
@@ -349,12 +511,7 @@ class ChartWindowHandles {
 
     if (relayout && this.plotDiv._fullLayout) {
       Plotly.relayout(this.plotDiv, {
-        shapes: allShapes(
-          this.state.events,
-          this.state.windowSel,
-          this.state.chartData.t_origin_ms,
-          this.recEndS(),
-        ),
+        shapes: chartShapes(this.state.windowSel, this.recEndS(), this.state.chartData),
       });
     }
     this.positionHandles();
@@ -460,7 +617,7 @@ class ChartWindowHandles {
 
       this.state.events = payload.events || [];
       updateSummary(payload);
-      renderEventsTable(this.state.events);
+      renderEventsTables(this.state.events);
       await refreshChart(this.state.events, this.state.windowSel, this.state.chartData, true);
       syncUrlParams(startS, endS, recStartS, recEndS);
       setWindowStatus("Trecho aplicado.", false);
@@ -527,6 +684,9 @@ async function renderCharts() {
     endS,
   };
 
+  renderEventsTables(events);
+  const qual = parseJson("analysis-quality", {});
+  updateSatMeter(qual.gyro_saturation_pct);
   await refreshChart(events, windowSel, chartData);
   chartHandles = new ChartWindowHandles(state);
 

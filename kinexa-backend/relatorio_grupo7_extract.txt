@@ -1,0 +1,1028 @@
+--- PAGE 1 ---
+ 
+ 
+FACULDADE ISRAELITA DE CIÊNCIAS DA SAÚDE ALBERT EINSTEIN 
+Bacharelado em Engenharia Biomédica 
+Antonio Elias Faiçal Junior 
+Beatriz Pena de Antonio 
+Isabelle Yadoya Chakur 
+José Guilherme Teixeira Salama 
+Otávio Nunes Ferreira Messer 
+Pedro Condão Machado Milhomem 
+Tiago Bandeira de Mello 
+ 
+ANÁLISE DA CORRIDA UTILIZANDO SENSORES INERCIAIS (IMUs): 
+ESTIMATIVA DE PARÂMETROS ESPAÇO-TEMPORAIS EM 
+ATLETAS PARALÍMPICOS 
+RELATÓRIO FINAL 
+Grupo 7 
+SÃO PAULO 
+2026 
+  
+
+--- PAGE 2 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+2 
+Antonio Elias Faiçal Junior 
+Beatriz Pena de Antonio 
+Isabelle Yadoya Chakur 
+José Guilherme Teixeira Salama 
+Otávio Nunes Ferreira Messer 
+Pedro Condão Machado Milhomem 
+Tiago Bandeira de Mello 
+ 
+ANÁLISE DA CORRIDA UTILIZANDO SENSORES INERCIAIS (IMUs): 
+ESTIMATIVA DE PARÂMETROS ESPAÇO-TEMPORAIS EM ATLETAS 
+PARALÍMPICOS 
+Relatório final apresentado no âmbito da disciplina 
+de Biomecânica do curso de Engenharia 
+Biomédica, como requisito para avaliação do 
+desenvolvimento do projeto de Aprendizagem 
+Baseada em Problemas (PBL). 
+Orientadora: Profa. Dra. Maria Isabel Veras Orselli 
+SÃO PAULO 
+2026 
+  
+
+--- PAGE 3 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+3 
+RESUMO 
+O desafio proposto pelo SESI (Avaliação e Inteligência Esportiva) consistiu em 
+medir com precisão adequada parâmetros espaço-temporais da passada (cadência e 
+tempo de contato com o solo, GCT) em atletas de corrida e salto, com interesse 
+particular em atletas paral ímpicos. Este relatório descreve o desenvolvimento e a 
+validação preliminar de um sistema wear able de baixo custo baseado em uma IMU 
+(ESP32-C3 + MPU6050) fixada ao dorso do pé, que implementa o algoritmo de 
+velocidade angular de pitch de Falbriard et al. (2018), associado a um aplicativo de 
+campo (Kinexa) para operação sem interação física com o hardware. Foram coletadas 
+13 sessões válidas com um atleta com amputação de membro superior (T47), um 
+atleta com deficiência visual (T11) e um voluntário controle, em esteira (4 a 14 km/h) 
+e pista. A cadência foi validada contra marcadores de vídeo (Kinovea, 60 Hz) por 
+análise de Bland-Altman, apresentando vi és de +0,33 passos por minuto (spm) e 
+limites de concordância de [-2,4; +3,0] sp m, cumprindo marginalmente o critério de 
+Falbriard (±3 spm). A validação do GCT não cumpriu o critério (viés -15,6 ms; LoA [-
+50; +19] ms), por causas identificadas e corrigíveis: saturação do giroscópio em ±1000 
+°/s nas coletas de pista, fixação inadequada do sensor por fita, ausência de calibração 
+funcional por PCA e resolução temporal insuficiente do sistema de referência (16,7 
+ms). O sistema entrega, no estado atual, estimativas de cadência confiáveis em 
+campo para o SESI e tendências longitudinais de GCT, com um roteiro claro de 
+correções já em andamento. 
+Palavras-chave: IMU; análise de corrida; atleti smo paralímpico; giroscópio; 
+parâmetros espaço-temporais; Falbriard. 
+  
+Commented [TM1]: acho que a gnt precisa deixar isso 
+evidente e não entre parenteses  
+
+--- PAGE 4 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+4 
+DECLARAÇÃO DE AUTORIA 
+A contribuição de cada integrante do Gr upo 7 é declarada a seguir, conforme a 
+taxonomia CRediT (Contributor Roles Taxonomy). As iniciais correspondem aos sete 
+autores listados na folha de rosto: AEF, BPA, IYC, JGS, ONM, PCM e TBM. 
+Quadro 1 - Matriz de contribuição dos autores (taxonomia CRediT). 
+Papel (CRediT) AEF BPA IYC JGS ONM PCM TBM 
+Conceituação X X X X X X X 
+Curadoria de dados X  X X X X  
+Análise formal X   X  X X 
+Investigação X X X X X X X 
+Metodologia X  X X  X X 
+Administração do projeto  X    X X 
+Recursos/Software X   X X X  
+Validação X   X  X X 
+Visualização  X X X  X  
+Redação (rascunho e revisão) X X X X X X X 
+Fonte: elaborado pelos autores (2026). 
+  
+
+--- PAGE 5 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+5 
+SUMÁRIO 
+RESUMO..................................................................................................................... 3 
+DECLARAÇÃO DE AUTORIA ..................................................................................... 4 
+SUMÁRIO .................................................................................................................... 5 
+LISTA DE ABREVIAÇÕES E SÍMBOLOS ................................................................... 7 
+1  INTRODUÇÃO ........................................................................................................ 8 
+1.1  Objetivos ......................................................................................................... 10 
+1.1.1  Objetivo Geral .......................................................................................... 10 
+1.1.2  Objetivos Específicos ............................................................................... 10 
+1.1.3  Hipóteses ................................................................................................. 11 
+2  MATERIAIS E MÉTODOS ..................................................................................... 12 
+2.1  Visão geral do sistema .................................................................................... 12 
+2.2  Prova de Conceito 1 (PoC1) - Phyphox .......................................................... 12 
+2.2.1  Limitações do PoC1 e justificativa para a transição à velocidade angular
+ ........................................................................................................................... 12 
+2.3  Hardware dedicado (PoC2/PoC3) .................................................................. 13 
+2.3.1  Configuração do giroscópio e faixa dinâmica ........................................... 15 
+2.4  Participantes ................................................................................................... 16 
+2.5  Protocolo de coleta de dados ......................................................................... 16 
+2.6  Algoritmo de detecção de eventos e cálculo de parâmetros ........................... 16 
+2.6.1  Pré-processamento .................................................................................. 16 
+2.6.2  Trimming da janela de atividade .............................................................. 17 
+2.6.3  Detecção de CI e CT ................................................................................ 17 
+2.6.4  Cálculo de parâmetros espaço-temporais ................................................ 17 
+2.6.5  Calibração e limitações do alinhamento de eixos .................................... 18 
+2.7  Aplicativo Kinexa ............................................................................................ 18 
+2.8  Protocolo de validação .................................................................................... 19 
+2.8.1  Sistema de referência .............................................................................. 19 
+2.8.2  Sincronização ........................................................................................... 19 
+2.8.3  Análise de Bland-Altman .......................................................................... 19 
+2.8.4  Nível da análise ........................................................................................ 19 
+2.8.5  Resolução do sistema de referência ........................................................ 19 
+3  RESULTADOS ...................................................................................................... 21 
+3.1  Estimativas por sessão e comparação com a literatura .................................. 21 
+3.2  Validação quantitativa: IMU vs. marcadores de vídeo .................................... 25 
+3.3  Análise de saturação do giroscópio ................................................................ 26 
+4  DISCUSSÃO ......................................................................................................... 27 
+
+--- PAGE 6 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+6 
+4.1  Desempenho em esteira ................................................................................. 27 
+4.2  Desempenho em pista .................................................................................... 27 
+4.3  Limitações ....................................................................................................... 27 
+4.4  Implicações práticas para o SESI ................................................................... 28 
+5  CONCLUSÃO ........................................................................................................ 29 
+6  CRONOGRAMA .................................................................................................... 30 
+REFERÊNCIAS ......................................................................................................... 31 
+APÊNDICE A - Capturas de tela do aplicativo Kinexa .............................................. 33 
+APÊNDICE B - Painéis de validação adicionais ........................................................ 36 
+APÊNDICE C - Trechos do pipeline em Python ........................................................ 40 
+C.1  Filtragem Butterworth (regra dos dois filtros) .............................................. 40 
+C.2  Trimming adaptativo por IQR ...................................................................... 40 
+C.3  Detecção de CI e CT (estimadores k1 e t1) ................................................ 40 
+ 
+  
+
+--- PAGE 7 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+7 
+LISTA DE ABREVIAÇÕES E SÍMBOLOS 
+BA Bland-Altman (método de análise de concordância) 
+BLE Bluetooth Low Energy 
+CI Contato Inicial (Initial Contact) 
+CT Contato Terminal / Retirada do Pé (Terminal Contact, toe-off) 
+EAP Estrutura Analítica do Projeto 
+FLT Flight Time (tempo de voo) 
+GCT Ground Contact Time (tempo de contato com o solo) 
+IMU Inertial Measurement Unit (unidade de medição inercial) 
+LoA Limits of Agreement (limites de concordância) 
+MEMS Micro-Electro-Mechanical Systems 
+MPU Motion Processing Unit 
+PBL Problem-Based Learning (aprendizagem baseada em problemas) 
+PCA Principal Component Analysis (análise de componentes principais) 
+PoC Proof of Concept (prova de conceito) 
+SESI Serviço Social da Indústria 
+SNR Signal-to-Noise Ratio (relação sinal-ruído) 
+spm steps per minute (passos por minuto) 
+Ωp Velocidade angular de pitch (rotação no plano sagital) 
+  
+
+--- PAGE 8 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+8 
+1  INTRODUÇÃO 
+No esporte de alto rendimento, o desem penho final resulta da integração entre 
+capacidade física, técnic a de movimento, estratégia e fatores psicológicos 
+(BARTLETT, 2007). A análise quantitativa dos padrões de corrida constitui, portanto, 
+uma ferramenta central para a otimizaç ão do desempenho e para a prevenção de 
+lesões. Em modalidades como o atletismo paralímpico de velocidade, a identificação 
+precisa de parâmetros espaço-temporais, tais como cadência, tempo de contato com 
+o solo (ground contact time, GCT) e tempo de voo, fornece informações objetivas que 
+orientam o treinamento e a correção técnica (WEYAND et al., 2000; NUMMELA; 
+KERÄNEN; MIKKELSSON, 2007). 
+Os determinantes biomecânicos da velocidade de corrida foram sintetizados por 
+Weyand et al. (2000): a velocidade máxima é determinada principalmente pela 
+redução do GCT, e não pelo aumento do tempo de voo. Especificamente, atletas de 
+elite que correm a velocidades acima de 9 m/s apresentam GCT de 80 a 95 ms, 
+enquanto atletas recreacionais correndo a 3,5 m/s exibem GCT de aproximadamente 
+200 a 280 ms (GOUTTEBARGE et al., 2015). A cadência, expressa em passos por 
+minuto (spm), aumenta com a velocidade: de 160 a 180 spm em corridas submáximas 
+(10 a 14 km/h) até valores acima de 240 spm em sprints máximos (NUMMELA; 
+KERÄNEN; MIKKELSSON, 2007). Esses parâ metros são especialmente relevantes 
+no atletismo paralímpico, no qual as classes T11 a T13 incluem atletas com deficiência 
+visual e as classes T45 a T47 compreendem atletas com amputações de membros 
+superiores, populações para as quais dados normativos são escassos na literatura e 
+cuja caracterização biomecânica apresenta relevância científica e aplicada. 
+O desafio formal deste projeto, apresentado pela orientadora no kickoff do PBL, 
+foi enunciado nos seguintes termos: 
+“Medir com precisão adequada as características espaço-temporais da 
+passada em atletas de corrida e salto. Há especial interesse em quantificar 
+variáveis como cadência e tempo de contato do pé com o solo. A solução 
+deve fornecer feedback em tempo real ao atleta com deficiência visual.” 
+ 
+O presente projeto é desenvolvido em parceria com o Serviço Social da Indústria 
+(SESI), na área de Avaliação e Inteligência Esportiva, com foco na equipe de atletismo 
+paralímpico. O desenvolvimento de tecnologia de análise de corrida para atletas com 
+
+--- PAGE 9 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+9 
+deficiência é especialmente relevante, pois a prática esportiva regular está associada 
+a benefícios funcionais, psicossociais e de qualidade de vida (WORLD HEALTH 
+ORGANIZATION, 2020). Atletas com amputação unilateral de membro superior 
+(classes T46/T47) apresentam assimetria de momentum angular durante a corrida, 
+decorrente da ausência de oscilação contralateral do braço, o que pode induzir 
+assimetrias nos parâmetros espaço-temporais entre os membros inferiores 
+(BONACCI et al., 2024). Para atletas co m deficiência visual (classe T11), que 
+competem guiados por atletas-guia, a literatura sobre parâmetros espaço-temporais é 
+escassa, representando uma lacuna que este projeto contribui para preencher. 
+Os métodos tradicionais de análise da corrida em laboratório, como plataformas 
+de força, sistemas optoeletrônicos de captura de movimento e esteiras 
+instrumentadas, apresenta m limitações importantes para o esporte de alto 
+rendimento: alto custo de aquisição e manu tenção, necessidade de infraestrutura 
+especializada, restrição ao ambiente controlado e impossibilidade de capturar o 
+movimento em condições reais de treino e competição (MURO-DE-LA-HERRÁN; 
+GARCÍA-ZAPIRAIN; MÉNDEZ-ZORRILLA, 2014; TAO et al., 2012). Essa lacuna 
+motivou o desenvolvimento de sistemas po rtáteis baseados em sensores inerciais 
+(IMUs), que combinam acelerômetros e giro scópios do tipo MEMS em dispositivos 
+compactos, leves e de baixo custo, capaz es de coletar dados diretamente sobre o 
+atleta em condições ecologicamente válidas (TAO et al., 2012). 
+Nesse contexto, destaca-se o trabalho de Falbriard et al. (2018), que propôs e 
+validou um algoritmo para estimativa de parâmetros temporais da corrida a partir de 
+uma IMU fixada no dorso do pé. O mé todo fundamenta-se no comportamento 
+cinemático do pé no plano sagital durante o ciclo de corrida: na fase de balanço 
+(swing), o pé executa uma rápida rotação anterior, atingindo a velocidade angular de 
+pitch (Ωp, medida no eixo médio-lateral, correspondente à rotação no plano sagital) 
+máxima no ponto de médio-balanço (mid-swing).  
+Essa característica cria um padrão periódico e robusto no sinal do giroscópio, 
+com um pico positivo bem definido a cada passada. O contato inicial (CI), instante em 
+que o pé toca o solo, e o contato terminal (CT), instante em que o pé deixa o solo, são 
+detectados como os dois mínimos consecutivos de Ωp que flanqueiam o ponto de 
+médio-balanço, respectivamente antes (CI) e depois (CT) do pico máximo. O GCT é 
+
+--- PAGE 10 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+10 
+então calculado como o intervalo temporal entre CI e CT do mesmo pé (FALBRIARD 
+et al., 2018). 
+A escolha da velocidade angular em detrimento da aceleração linear justifica-se 
+por razões técnicas importantes. O sinal  de aceleração do pé durante a corrida 
+apresenta múltiplos picos por passada (impacto de calcanhar, propulsão na fase de 
+apoio e choque de aterrissagem), o que introduz ambiguidade na identificação do CI 
+e do CT, especialmente em velocidades elevadas, nas quais os picos de impacto 
+podem exceder o limite de saturação do sensor (POTTER et al., 2019). O sinal de Ωp, 
+por sua vez, exibe exatamente um pico positivo por passada durante o médio-balanço, 
+independentemente da velocidade, o que confere ao método maior robustez e menor 
+sensibilidade ao limiar de detecção (FALBRIARD et al., 2018). A validação original do 
+método foi conduzida em 41 voluntários saudáveis correndo em esteira instrumentada 
+com plataforma de força, em velocidades de 10 a 20 km/h, estimando o GCT com viés 
+mediano de 15 ± 12 ms e precisão inferior a 4 ± 3 ms em relação ao padrão-ouro. 
+O problema central deste estudo é a ausência de ferramentas acessíveis, 
+portáteis e validadas para a estimativa de parâmetros espaço-temporais da corrida de 
+atletas paralímpicos em condições reais de treinamento. A solução proposta consiste 
+em um sistema wearable baseado em IM U fixada ao pé, implementando o algoritmo 
+de Falbriard et al. (2018), integrado a um aplicativo de coleta de campo. O requisito 
+de feedback em tempo real, presente no enunciado, foi discutido com a orientadora e 
+definido como fora do escopo de entrega deste ciclo, sendo tratado como trabalho 
+futuro (Seção 5). 
+ 
+ 
+1.1  Objetivos 
+1.1.1  Objetivo Geral 
+Desenvolver, implementar e validar pr eliminarmente um sistema wearable para 
+estimativa de parâmetros espaço-temporais de corrida em atletas paralímpicos, 
+baseado em IMU no dorso do pé (FALBRIARD et al., 2018), integrado ao aplicativo 
+Kinexa para coleta em campo. 
+1.1.2  Objetivos Específicos 
+
+--- PAGE 11 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+11 
+1. Demonstrar a inviabilidade da abordagem  por aceleração linear (PoC1) com 
+evidências quantitativas (v ariância de cadência superior a 30 spm entre 
+passadas). 
+2. Implementar o algoritmo de Falbriard et  al. (2018) com dois filtros Butterworth 
+(5 Hz e 30 Hz) e trimming adaptativo por IQR. 
+3. Estimar cadência, GCT e tempo de voo (FLT) em 13 sessões com atletas 
+paralímpicos (T11, T47) e voluntário controle. 
+4. Validar a cadência contra marcadores de vídeo (Kinovea, 60 Hz) por análise de 
+Bland-Altman, verificando o critério de ±3 spm. 
+5. Identificar e quantificar o efeito da saturação do giroscópio em ±1000 °/s sobre 
+a estimativa de GCT. 
+6. Desenvolver o aplicativo Kinexa para operação da coleta sem interação física 
+com o hardware. 
+1.1.3  Hipóteses 
+• H1: a cadência estimada pelo IMU apresentará viés inferior a ±3 spm em 
+relação ao vídeo nas sessões em esteira (T47 e controle). 
+• H2: o GCT estará dentro das faixas de referência nas sessões sem saturação 
+e fora da faixa nas sessões com saturação acima de 2%. 
+• H3: a saturação de 3,35% (T11 pista) produzirá GCT implausível (acima de 400 
+ms), enquanto 1,85% (T47 sprint) não comprometerá a estimativa. 
+• H4: a abordagem por velocidade angular (Falbriard) produzirá menor variância 
+de cadência que a abordagem por aceleração linear (PoC1). 
+  
+
+--- PAGE 12 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+12 
+2  MATERIAIS E MÉTODOS 
+2.1  Visão geral do sistema 
+O sistema é composto por três módulos principais: (1) subsistema de aquisição 
+de dados inerciais, responsável pela coleta dos sinais de aceleração e velocidade 
+angular do pé; (2) subsistema de proc essamento de sinais em Python, que 
+implementa o algoritmo de detecção de event os e o cálculo dos parâmetros espaço-
+temporais; e (3) aplicativo de coleta de campo (Kinexa), que opera o dispositivo e 
+organiza os dados das sessões. O desenvolvimento seguiu uma abordagem iterativa 
+por Provas de Conceito (PoC), partindo de um dispositivo móvel convencional (PoC1), 
+evoluindo para um hardware dedicado compacto (PoC2/PoC3), passando pelas 
+coletas em campo no SESI e culminando no estado atual do protótipo (dois 
+dispositivos com transmissão BLE, encaps ulamentos impressos em 3D, fixação por 
+velcro e aplicativo Kinexa). 
+2.2  Prova de Conceito 1 (PoC1) - Phyphox 
+A primeira prova de conceito utiliz ou um smartphone fixado ao dorso do pé por 
+faixa elástica, com o aplicativo Phyphox (RWTH Aachen) configurado para aquisição 
+do acelerômetro integrado. A taxa de amostragem variou entre 486 e 494 Hz, 
+compatível com a literatura (FALBRIARD  et al., 2018). Foram realizadas quatro 
+coletas em esteira. Apenas a aceleração linear triaxial foi coletada; não foram obtidos 
+dados de giroscópio nesta etapa, o que cons titui uma limitação central do PoC1. O 
+sinal foi processado com filtro Butterworth de 2ª ordem (fc = 8 Hz) e detecção de picos 
+na magnitude da aceleração resultante. 
+2.2.1  Limitações do PoC1 e justificativa para a transição à velocidade angular 
+A análise dos dados do PoC1 revelou dois problemas fundamentais: (i) a 
+presença de múltiplos picos de aceleração  por passada, decorrentes dos diferentes 
+eventos mecânicos do ciclo de corrida (impacto de calcanhar, propulsão e 
+aterrissagem), tornando ambígua a identificação do CI por limiar de amplitude; e (ii) a 
+alta variância das estimativas de cadência (desvio-padrão entre 29 e 91 spm), que 
+inviabiliza a caracterização biomecânica precisa.  
+Do ponto de vista teórico, Potter et al. (2019) demonstraram que o sinal de 
+aceleração do pé em corridas rápidas apre senta picos de impacto elevados, que 
+saturam sensores de baixo fundo de escala e impossibilitam a detecção do CI. A 
+
+--- PAGE 13 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+13 
+Figura 1 compara, sobre dados reais de corrida a 10 km/h, os dois sinais: a aceleração 
+resultante (painel a), com vários picos por passada, e a velocidade angular de pitch 
+Ωp (painel b), com exatamente um pico de mid-swing por passada e mínimos de CI/CT 
+bem definidos. 
+ 
+Figura 1 - Comparação entre o sinal de aceleração resultante (a) e a velocidade angular de pitch Ωp (b), 
+sobre uma janela de 4 s de corrida a 10 km/h (atleta T47). O sinal de aceleração apresenta múltiplos picos 
+por passada (ambiguidade na detecção de CI), enquanto Ωp apresenta um único pico de mid-swing por 
+passada, com CI e CT localizados pelos mínimos consecutivos. 
+Fonte: elaborado pelos autores (2026), a partir dos dados do SESI. 
+2.3  Hardware dedicado (PoC2/PoC3) 
+O hardware dedicado é composto por: microcontrolador ESP32-C3 Super Mini 
+(Espressif, 160 MHz, 4 MB de flash), IMU MPU6050 (InvenSense/TDK), bateria Li-Po 
+de 3,7 V, circuito de carga TP4056, conversor elevador MT3608 (regulado a 
+exatamente 5 V antes da conexão ao ESP32 ), LED RGB de indicação de estado e 
+chave tátil. O mapeamento de portas (GPI O) confirmado é: LED R/G/B nos pinos 
+5/6/7, botão no pino 4, SDA no pino 8 e SCL no pino 9. A aquisição ocorre a 500 Hz 
+por polling baseado no timer micros(), com armazenamento em LittleFS (16 bytes por 
+amostra) e transferência ao computador via BLE (Etapa 11) ou serial. 
+O firmware embarcado implementa uma máquina de estados de sete estágios, 
+sinalizados por cores do LED RGB: IDLE, CALIB (calibração estática por gravidade), 
+READY, RECORDING, SAVE_XFER (transferência dos dados), FLASH_OK e 
+
+
+--- PAGE 14 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+14 
+FLASH_FAIL. Essa estrutura garante operação determinística e diagnóstico visual em 
+campo. 
+A IMU foi posicionada no dorso do pé direito, com o plano da placa paralelo ao 
+plano superior do pé, o eixo X positivo orientado para os dedos (ântero-posterior) e o 
+eixo Y positivo no sentido médio-lateral. Nessa configuração, a componente Y do 
+giroscópio corresponde à velocidade angular de pitch ( Ωp), rotação no plano sagital, 
+que é o sinal utilizado pelo algoritmo de Falbriard et al. (2018). A Figura 2 ilustra essa 
+orientação, tal como apresentada na tela de posicionamento do aplicativo Kinexa. 
+ 
+Figura 2 - Orientação do sensor no dorso do pé e referencial de eixos (X para os dedos, Y médio-lateral, Z 
+vertical). A componente gy do giroscópio corresponde a Ωp. Imagem da tela de orientação do aplicativo 
+Kinexa. 
+Fonte: elaborado pelos autores (2026). 
+Quanto à fixação, nas coletas do SESI o sensor foi fixado com fita adesiva 
+(durex) e esparadrapo, solução declar ada honestamente como inadequada: ela 
+permite microdeslizamento do se nsor durante a corrida, alterando o eixo de pitch 
+captado, e é uma das causas prováveis da variância elevada do GCT observada 
+(Seção 4). O protótipo atual usa encapsulamento impresso em 3D (PLA, 47,25 mm de 
+largura) e fixação por elásticos de velcro, eliminando essa fonte de erro nas próximas 
+
+
+--- PAGE 15 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+15 
+coletas. Os desenhos do esquemático elétrico e do encapsulamento CAD constam do 
+relatório parcial do grupo. 
+2.3.1  Configuração do giroscópio e faixa dinâmica 
+Nas coletas do SESI, o giroscópio foi configurado na faixa de ±1000 °/s 
+(registrador GYRO_CONFIG = 0x10, sensibilidade de 32,8 LSB/°/s) e o acelerômetro 
+em ±8 g. Uma análise de ordem de grandeza demonstra que essa faixa é insuficiente 
+para o sprint do atleta T11. Consider ando velocidade de pista de aproximadamente 
+34 km/h (9,4 m/s) e cadência de sprint próxima de 257 spm (tempo de passo de cerca 
+de 0,23 s, tempo de passada de cerca de 0,46 s), o tempo de balanço corresponde a 
+aproximadamente 0,23 s. Com uma excursão angular de pitch da ordem de 200° 
+durante o balanço, a velocidade angular média é de cerca de 870 °/s. Como o pico 
+instantâneo no mid-swing supera a média por um fator de aproximadamente 1,3 a 1,4, 
+o pico de Ωp atinge a faixa de 1100 a 1200 °/s,  excedendo o teto de ±1000 °/s e 
+provocando saturação (clipping) do sinal. 
+Essa previsão é confirmada empiricamente pelos dados: nas coletas de pista, a 
+fração de amostras saturadas no teto de ±1000 °/s foi de 1,85% (T47 sprint) e de 
+2,85% a 3,35% (T11). Potter et al. (2019)  reportam que erros significativos em 
+estimativas baseadas em IMU de pé ocorrem quando a fração saturada excede cerca 
+de 2,6%, o que é consistente com a perda de validade do GCT do atleta T11 
+observada neste trabalho. A correção foi aplicada na Etapa 11 do firmware 
+(GYRO_CONFIG = 0x18, ±2000 °/s, 16,4 LSB/°/s), que é a faixa adotada por Falbriard 
+et al. (2018) e pela literatura de corrida e sprint com IMU de pé (MARTÍN-FUENTES; 
+VAN DEN TILLAAR, 2022; ARISTIZÁBAL PLA et al., 2024). 
+ 
+Quanto à compatibilidade retroativa do pipeline, o módulo de leitura 
+(ler_dados.py) detecta automat icamente a faixa configurada  a partir do cabeçalho 
+#GYRO_RANGE do arquivo CSV. Os arquivos das coletas do SESI, anteriores à 
+Etapa 11, não possuem esse cabeçalho e correspondem a ±1000 °/s. Por isso, esses 
+dados devem ser processados com a constant e de 32,8 LSB/°/s; aplicar a constante 
+de 16,4 LSB/°/s (padrão do firmware atual) a esses arquivos superestimaria Ωp por 
+um fator de dois, distorcendo a amplitude do sinal e os limiares de detecção. Todos 
+os resultados deste relatório foram gerados com a constante correta de 32,8 LSB/°/s. 
+
+--- PAGE 16 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+16 
+2.4  Participantes 
+Participaram três vol untários, identificados se m nomes para preservar a 
+privacidade: (i) um voluntário controle, sem deficiência física, que realizou caminhadas 
+em esteira a 4 e 6 km/h; (ii) um atleta  com amputação do membro superior direito 
+(classe T47), que realizou corridas em esteira a 10, 12 e 14 km/h e um sprint em pista 
+externa; e (iii) um atleta com deficiência visual (classe T11), que correu em pista 
+externa acompanhado de atleta-guia. Todas as  coletas usaram o sensor fixado ao 
+dorso do pé direito. Tratando-se de um projeto educacional, com consentimento verbal 
+dos participantes e sem coleta de dados  sensíveis identificáveis, não houve 
+submissão a Comitê de Ética em Pesquisa; recomenda-se submissão a CEP para 
+eventual continuidade com finalidade de publicação. 
+2.5  Protocolo de coleta de dados 
+A coleta foi realizada nas instalações do SESI (Avaliação e Inteligência 
+Esportiva), em São Paulo. Para sincro nização temporal com gravações de vídeo, 
+adotou-se o protocolo de stomps: ao início  e ao fim de cada coleta, o participante 
+executou três pisadas firmes consecutiv as com o pé instrumentado, produzindo 
+transientes de aceleração de alta amplitude e isolados no canal vertical, facilmente 
+identificáveis para alinhamento algorítmico com a câmera. Esse protocolo dispensa 
+hardware adicional de sincronização e é adequado ao ambiente de campo. As coletas 
+identificadas como run_003 e run_006 foram descartadas por ausência de stomps e 
+duração insuficiente; as demais 13 sessões foram utilizadas para a análise. 
+2.6  Algoritmo de detecção de eventos e cálculo de parâmetros 
+O processamento foi realizado em Python 3, seguindo o método de Falbriard et 
+al. (2018) com adaptações para o MPU6050 e o protocolo adotado. 
+2.6.1  Pré-processamento 
+O sinal bruto de Ωp (canal gy, em °/s) foi submetido a dois filtros passa-baixa 
+distintos: (i) Butterworth de 2ª ordem com fc = 5 Hz para a detecção dos picos de mid-
+swing, escolhida para garantir exatament e um pico por passada independentemente 
+da velocidade, suprimindo harmônicos secundários da rotação do pé; e (ii) Butterworth 
+de 2ª ordem com fc = 30 Hz para a localização precisa de CI e CT pelos mínimos de 
+Ωp, conforme recomendado por Falbriard et al. (2018) para preservar a resolução 
+
+--- PAGE 17 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+17 
+temporal dos eventos sem amplificar ru ído de fixação. Ambos os filtros foram 
+aplicados em fase zero (filtfilt), eliminando o atraso de fase. 
+ 
+2.6.2  Trimming da janela de atividade 
+Para isolar a janela de corrida estável e descartar repouso, stomps e transições 
+de velocidade, implementou-se um trimmi ng automático adaptativo. O algoritmo: (1) 
+detecta todos os picos de mid-swing no sinal filtrado a 5 Hz (limiar de 80 °/s e distância 
+mínima entre picos de fs/4,5 amostras); (2) calcula os intervalos entre picos 
+consecutivos; (3) estima o intervalo válid o via intervalo interquartílico (IQR), com 
+limites de [Q25 - 1,5·IQR; Q75 + 1,5·IQR]; e (4) identifica o maior bloco contíguo de 
+intervalos válidos como a janela de atividade. O procedimento, inspirado na robustez 
+do IQR como estimador de escala resistente a outliers (TUKEY, 1977), funciona tanto 
+para caminhada (stride de cerca de 1,1 s) quanto para sprint (stride de cerca de 0,35 
+s), sem parametrização manual. 
+ 
+2.6.3  Detecção de CI e CT 
+Dentro da janela de atividade, para cada par de picos de mid-swing consecutivos 
+(p1, p2), o ciclo é dividido ao meio. O CI é detectado como o mínimo de Ωp (filtrado a 
+30 Hz) no intervalo [p1; (p1+p2)/2], correspondente ao toque do pé no solo após o 
+balanço anterior; o CT é o mínimo de Ωp no intervalo [(p1+p2)/2; p2], correspondente 
+à retirada do pé antes do balanço seguinte. Essa lógica reproduz os estimadores k1 
+(CI) e t1 (CT) de Falbriard et al. (2018). 
+2.6.4  Cálculo de parâmetros espaço-temporais 
+Os parâmetros calculados por sessão foram: (i) cadência (spm), estimada como 
+2 × 60 / T_passada, em que T_passada é o intervalo entre CIs consecutivos do mesmo 
+pé; (ii) GCT (ms), calculado como o intervalo de CI a CT do mesmo passo; e (iii) tempo 
+de voo estimado (ms), pela fórmula FLT = T_passo − GCT = T_passada/2 − GCT. 
+Essa fórmula pressupõe simetria bilatera l e, portanto, deve ser interpretada com 
+cautela para o atleta T47, que apresenta assimetria de momentum angular pela 
+ausência de um braço. Os valores foram expressos como média ± desvio-padrão por 
+passada dentro da janela de atividade. 
+
+--- PAGE 18 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+18 
+2.6.5  Calibração e limitações do alinhamento de eixos 
+O método de Falbriard et al. (2018) prevê uma calibração funcional por Análise 
+de Componentes Principais (PCA) para alinhar os eixos técnicos do sensor aos eixos 
+anatômicos do pé, garantindo que Ωp capture exclusivamente a rotação sagital. A 
+calibração estática por gravidade (Parte 1), que roda no ESP32, só precisa ser refeita 
+quando o sensor se desloca fisicamente entre ensaios, não a cada coleta da mesma 
+sessão. A calibração funcional por PCA (Parte 2), que roda offline em Python, não foi 
+implementada nas coletas analisadas: o eixo Y do MPU6050 foi assumido como 
+aproximadamente paralelo ao eixo médio-lateral do pé. Essa simplificação introduz 
+crosstalk entre eixos, variável entre coletas, e contribui para o aumento da variância 
+das estimativas de GCT, especialmente em maiores velocidades. 
+2.7  Aplicativo Kinexa 
+O aplicativo Kinexa foi desenvolvido para eliminar a necessidade de interação 
+física com o hardware em campo. A arquitetura conecta o ESP32-C3 ao smartphone 
+por BLE, e o smartphone a um servidor loca l (por Wi-Fi/USB) que persiste os dados 
+em banco de dados. O técnico inicia e finaliza a coleta pelo aplicativo, sem pressionar 
+botões no dispositivo. O flux o de uso, ilustrado no Apêndi ce A (Figuras A.1 a A.6), 
+compreende seis telas: 
+7. Dashboard: lista de coletas recentes com status (PENDENTE / 
+SINCRONIZADO), contadores  de atletas e coletas, horário da última 
+sincronização e botão NOVA COLETA. 
+8. Nova Coleta: identificação do atleta (cód igo), tipo de atividade (corrida, marcha, 
+salto vertical), ambiente (esteira ou pista) e observações livres. 
+9. Validação BLE: verifica a conexão co m o dispositivo KINEXA_01 (exibe RSSI) 
+e um checklist (conexão estabelecida, serviços BLE encontrados, firmware 
+compatível, sensor operacional). 
+10. Posicionamento do sensor: diagrama 3D dos eixos (X para os dedos, Y médio-
+lateral, Z vertical) com instrução de orientação antes da calibração. 
+11. Calibração: checklist de pré-condiçõ es (posição de referência, repouso, 
+ausência de vibrações) e comando INICIAR CALIBRAÇÃO enviado ao ESP32. 
+12. Gravação: cronômetro em tempo real e log de eventos marcados pelo operador 
+durante a coleta (por exemplo, “00:12. 04 Esteira ligada 4 km/h”), com botão 
+FINALIZAR COLETA. 
+
+--- PAGE 19 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+19 
+2.8  Protocolo de validação 
+2.8.1  Sistema de referência 
+A validação utilizou como referência marcadores rastreados em vídeo a 60 Hz 
+pelo software Kinovea, posicionados no 4º metatarso e no calcâneo do pé 
+instrumentado. O CI foi identificado pelo mínimo vertical do calcâneo (pé mais próximo 
+do solo) e o CT pelo início da elevação do metatarso. 
+2.8.2  Sincronização 
+O alinhamento temporal entre IMU e víde o foi feito pelos stomps: o primeiro 
+stomp gera um pico isolado de alta amp litude no canal de aceleração do IMU e uma 
+transição abrupta no marcador do calcân eo, permitindo calcular o deslocamento 
+(offset) entre as duas bases de tempo. 
+2.8.3  Análise de Bland-Altman 
+A concordância entre IMU e vídeo foi av aliada por análise de Bland-Altman 
+(BLAND; ALTMAN, 1986), método padrão para comparação entre dois sistemas de 
+medição. Diferentemente do coeficient e de correlação de Pearson, que mede 
+associação linear e não concordância, a análise quantifica o viés sistemático 
+(diferença média) e os limit es de concordância de 95% (LoA = viés ± 1,96 × desvio-
+padrão das diferenças). Um método é considerado intercambiável com o de referência 
+quando os LoA permanecem dentro de um inte rvalo de aceitabilidade (GIAVARINA, 
+2015). Adotaram-se os critérios de Falb riard et al. (2018): LoA de ±3 spm para 
+cadência e de ±15 ms para GCT. 
+2.8.4  Nível da análise 
+A validação foi conduzida em nível de sessão (uma observação por sessão, 
+representada pela cadência ou pelo GCT médio), e não passada a passada. Essa 
+escolha decorre de uma limitação do sistem a de referência (Seção 2.8.5) e reduz o 
+poder estatístico (n = 6 sessões para c adência e n = 5 para GCT), sem capturar a 
+variabilidade intrassessão. Trata-se de uma limitação metodológica relevante, 
+declarada explicitamente. 
+2.8.5  Resolução do sistema de referência 
+A câmera a 60 Hz tem resolução temporal de 16,7 ms por quadro, superior ao 
+critério de aceitabilidade de ±15 ms para o GCT. Essa resolução é insuficiente para a 
+
+--- PAGE 20 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+20 
+correspondência passada a passada de eventos de CT com a precisão necessária. A 
+validação passada a passada exigiria câmera de alta velocidade ( ≥ 240 Hz) ou 
+plataforma de força (≥ 1000 Hz, padrão da literatura). 
+  
+
+--- PAGE 21 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+21 
+3  RESULTADOS 
+3.1  Estimativas por sessão e comparação com a literatura 
+A Tabela 1 apresenta os parâmetros espaço-temporais estimados para as 13 sessões 
+válidas. O símbolo ✓ indica valor dentro da faixa de referência da literatura; ⚠ indica 
+valor fora da faixa ou co m variância excessiva; e ✗ indica valor fisicamente 
+implausível, atribuído à saturação do giroscópio. A coluna Sat. gy expressa a 
+porcentagem de amostras do giroscópio (canal gy) saturadas no teto de ±1000 °/s. 
+Tabela 1 - Parâmetros espaço-temporais estimados por sessão. Faixas de referência: cadência 
+(TUDOR-LOCKE et al., 2019; GOUTTEBARGE et al., 2015; WEYAND et al., 2000); GCT 
+(GOUTTEBARGE et al., 2015; FALBRIARD et al., 2018); FLT (FALBRIARD et al., 2018). 
+Sessão Sat. gy (%) Passadas Cadência (spm) GCT (ms) FLT est. (ms) 
+Controle 4 km/h (1) 0,00 16 102 ± 5 ✓ 678 ± 56 ✓ —  
+Controle 4 km/h (2) 0,00 11 102 ± 4 ✓ 667 ± 28 ✓ —  
+Controle 6 km/h 0,00 17 115 ± 12 ✓ 570 ± 107 ✓ —  
+T47 10 km/h (1) 0,01 36 164 ± 28 ✓ 232 ± 150 ✓ 130 ✓ 
+T47 10 km/h (2) 0,00 40 164 ± 32 ✓ 212 ± 172 ✓ 158 ⚠ 
+T47 12 km/h (1) 0,01 41 171 ± 14 ✓ 145 ± 97 ⚠ 203 ⚠ 
+T47 12 km/h (2) 0,00 46 168 ± 32 ✓ 276 ± 171 ⚠ 78 ⚠ 
+T47 14 km/h (1) 0,02 42 177 ± 28 ✓ 182 ± 57 ✓ 161 ✓ 
+T47 14 km/h (2) 0,00 35 173 ± 27 ✓ 194 ± 104 ✓ 155 ✓ 
+T47 14 km/h (3) 0,08 41 173 ± 17 ✓ 192 ± 93 ✓ 153 ✓ 
+T47 pista (sprint) 1,85 ⚠ 23 257 ± 31 ✓ 100 ± 30 ✓ 130 ✓ 
+T11 pista (1) 3,35 ⚠ 17 186 ± 65 ✓ 477 ± 302 ✗ —  
+T11 pista (2) 2,85 ⚠ 10 233 ± 23 ✓ 397 ± 333 ✗ —  
+Fonte: elaborado pelos autores (2026), processamento com GYRO_SENS = 32,8 LSB/°/s (±1000 °/s). 
+Em síntese: a cadência fi cou dentro da faixa de referência em todas as 13 
+sessões. O GCT mostrou-se plausível nas caminhadas do controle e na maioria das 
+corridas do atleta T47, com duas exceç ões a 12 km/h (145 e 276 ms, fora da faixa 
+esperada de 180 a 265 ms) e variância elevada em várias sessões de esteira. O sprint 
+do atleta T47 produziu GCT de 100 ms, coerente com a literatura de elite. Para o atleta 
+T11, o GCT (477 e 397 ms) é fisicamente implausível, pois excede o próprio tempo de 
+passada esperado para a cadência observada. As Figuras 3 a 7 apresentam painéis 
+de validação representativos. 
+
+--- PAGE 22 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+22 
+ 
+Figura 3 - Painel de validação do voluntário controle a 4 km/h (caminhada). Painel superior: sinal Ωp 
+completo com mid-swings e janela útil; painel central: janela útil com CI e CT; painéis inferiores: 
+cadência por passada e GCT por passo, com faixas de referência. 
+Fonte: elaborado pelos autores (2026). 
+ 
+Figura 4 - Painel de validação do voluntário controle a 6 km/h (caminhada rápida). 
+
+
+--- PAGE 23 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+23 
+Fonte: elaborado pelos autores (2026). 
+ 
+Figura 5 - Painel de validação do atleta T47 a 10 km/h (corrida em esteira). Cadência 164 ± 28 spm; GCT 
+232 ± 150 ms; FLT estimado 130 ms. 
+Fonte: elaborado pelos autores (2026). 
+ 
+
+
+--- PAGE 24 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+24 
+Figura 6 - Painel de validação do atleta T47 a 14 km/h. A menor variância relativa do GCT em comparação 
+às sessões de 10 e 12 km/h sugere regime de corrida mais estável. 
+Fonte: elaborado pelos autores (2026). 
+ 
+Figura 7 - Painel de validação do atleta T47 na pista (sprint). Cadência 257 ± 31 spm; GCT 100 ± 30 ms. A 
+saturação de 1,85% das amostras é visível no achatamento dos picos de Ωp em ±1000 °/s, sem 
+comprometer a estimativa. 
+Fonte: elaborado pelos autores (2026). 
+
+
+--- PAGE 25 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+25 
+ 
+Figura 8 - Painel de validação do atleta T11 na pista. O GCT de 477 ± 302 ms é fisicamente implausível: a 
+saturação de 3,35% achata os picos de Ωp e desloca os mínimos de CI e CT, invalidando a estimativa 
+temporal. 
+Fonte: elaborado pelos autores (2026). 
+ 
+3.2  Validação quantitativa: IMU vs. marcadores de vídeo 
+A Figura 9 apresenta a análise de Bland-Altman da concordância entre o IMU e 
+os marcadores de vídeo a 60 Hz, em nível de sessão. Para a cadência (n = 6 sessões 
+de esteira), o viés foi de +0,33 spm (o IMU superestima ligeiramente), com LoA de [-
+2,4; +3,0] spm e correlação de Pearson de r = 0,998. O critério de Falbriard (±3 spm) 
+é cumprido, ainda que o limite superior do LoA coincida com a fronteira de 
+aceitabilidade. Para o GCT (n = 5 sessões de esteira do atleta T47), o viés foi de -15,6 
+ms (o IMU subestima o GCT), com LoA de [- 50; +19] ms. O critério de ±15 ms não é 
+cumprido, sobretudo no limite inferior (-50 ms). 
+
+
+--- PAGE 26 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+26 
+ 
+Figura 9 - Análise de Bland-Altman da cadência (esquerda) e do GCT (direita), IMU vs. marcadores de 
+vídeo a 60 Hz, em nível de sessão. Linha contínua: viés; linhas tracejadas: limites de concordância de 
+95%; linha pontilhada vermelha: critério de aceitabilidade de Falbriard et al. (2018). 
+Fonte: elaborado pelos autores (2026). 
+Esse resultado deve ser lido de forma honesta: a cadência é validada 
+quantitativamente, ao passo que o GCT n ão atinge o critério da literatura. Como 
+discutido na Seção 4, isso reflete ta nto limitações do sistema sob validação 
+(saturação, fixação por fita, ausência de calibração PCA) quanto a resolução 
+insuficiente do próprio sistema de referência a 60 Hz. 
+3.3  Análise de saturação do giroscópio 
+A saturação foi desprezível nas coletas de esteira (0,00 a 0,08%), conforme a 
+Tabela 1, e relevante nas de pista: 1,85% no sprint do atleta T47 e 2,85% a 3,35% no 
+atleta T11. O efeito da saturação não é pr oporcional à fração saturada: ela atua 
+deformando a forma dos mínimos de Ωp, que são exatamente os pontos usados para 
+localizar CI e CT. No atleta T47, a fração saturada (1,85%) é pequena e não coincide 
+com os instantes de CI/CT, de modo que o GCT de 100 ms permanece válido. No 
+atleta T11, a fração superior a 2,6% (POTTER et al., 2019) desloca os mínimos 
+detectados e produz GCT implausível (477 e 397 ms), embora a cadência se 
+mantenha plausível, pois deriva dos intervalos entre picos de mid-swing, menos 
+sensíveis ao clipping do que os mínimos de apoio. 
+  
+
+
+--- PAGE 27 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+27 
+4  DISCUSSÃO 
+4.1  Desempenho em esteira 
+A cadência apresentou desempenho excelent e em esteira, dentro da faixa de 
+referência em todas as sessões e com viés inferior a 1 spm na validação por vídeo. O 
+GCT foi mais variável. Três fatores explicam a variância: a fixação por fita nas coletas 
+do SESI, que permite microdeslizamento do sensor; a ausência de calibração 
+funcional por PCA, que mantém crosstalk entre eixos; e a resolução do padrão-ouro a 
+60 Hz, insuficiente para o GCT. Conduziu-se uma análise de sensibilidade com 
+remoção de outliers por IQR por sessão. A remoção reduz a variância nas sessões de 
+14 km/h (por exemplo, de 57 para 19 ms em T47 14 km/h-1), porém nas sessões de 
+12 km/h nenhum outlier é removido (a variânc ia é sistemática), e nas de 10 km/h a 
+remoção desloca o GCT para abaixo da faixa de referência (de 232 para cerca de 168 
+ms), indicando que os pontos descartad os podem ser passadas genuínas de maior 
+tempo de contato. Por isso, a Tabela 1 reporta os valores sem remoção de outliers, e 
+a remoção não é recomendada como pós-processamento padrão. 
+4.2  Desempenho em pista 
+No sprint do atleta T47, os result ados são confiáveis apesar de 1,85% de 
+saturação: cadência de 257 spm e GCT de 100 ms, ambos coerentes com a literatura 
+de elite. Para o atleta T11, o GCT é inválido pela saturação de 2,85% a 3,35%, 
+enquanto a cadência permanece plausível. Esse contraste confirma que a saturação 
+compromete seletivamente a estimativa temporal de apoio (CI/CT) antes de afetar a 
+estimativa de cadência. 
+4.3  Limitações 
+13. Saturação do giroscópio em ±1000 °/s (limitação crítica nas coletas de pista). 
+Correção já implementada: a Etapa 11 do firmware usa ±2000 °/s. 
+14. Fixação por fita nas coletas do SESI, fonte provável de microdeslizamento e 
+variância do GCT. Solução adotada: encapsulamento 3D com velcro. 
+15. Sistema de referência a 60 Hz (resolu ção de 16,7 ms, superior ao critério de 
+±15 ms para GCT). O padrão-ouro ideal seria plataforma de força a 1000 Hz. 
+16. Validação em nível de sessão, e não passada a passada (n = 6 e n = 5 pontos), 
+o que limita o poder estatístico. 
+
+--- PAGE 28 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+28 
+17. Ausência de calibração funcional por PCA (Falbriard, Parte 2), com estimativa 
+de impacto de redução de 50 a 60% na variância do GCT. 
+18. FLT estimado por simetria bilateral, problemático para o atleta T47 (assimetria 
+de momentum angular; BONACCI et al., 2024). 
+19. N reduzido (dois atletas paralímpicos), sem generalização populacional. 
+4.4  Implicações práticas para o SESI 
+É útil separar o que o sistema entrega com confiança no estado atual do que ainda 
+não entrega. 
+O sistema entrega, com confiança: 
+• Cadência com viés inferior a 1 spm em esteira e pista (para o perfil T47 e 
+condições equivalentes). 
+• Tendências longitudinais de GCT: a variação relativa entre sessões é 
+informativa mesmo com variância absoluta elevada. 
+• Detecção de assimetrias de passada entre os pés, viabilizada pelos dois 
+dispositivos disponíveis. 
+• Log de eventos de treino via Kinexa, para correlacionar a biomecânica com as 
+ações do técnico. 
+O sistema ainda não entrega: 
+• GCT com precisão de ±15 ms para sp rint (pendente de ±2000 °/s, calibração 
+PCA e fixação por velcro). 
+• Parâmetros confiáveis para o atleta T11 em pista (mesma pendência). 
+Roteiro de implementação (próximos passos): 
+20. Recoleta do atleta T11 com o firmware da Etapa 11 (±2000 °/s já disponível). 
+21. Implementação da calibração funcional por PCA offline (módulo Python já 
+desenvolvido). 
+22. Integração do cálculo de cadência ao Kinexa, para exibição em tempo real na 
+beira da pista. 
+  
+
+--- PAGE 29 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+29 
+5  CONCLUSÃO 
+Retomando as hipóteses, com avaliação honesta do alcance dos dados: 
+• H1 (cadência com viés inferior a ±3 sp m): confirmada. O viés foi de +0,33 spm 
+e os LoA de [-2,4; +3,0] spm, cumprin do o critério, ainda que o limite superior 
+coincida com a fronteira de aceitabilidade. 
+• H2 (GCT válido sem saturação e inválido acima de 2%): parcialmente 
+confirmada. A invalidação sob saturação superior a 2% é claramente 
+confirmada (atleta T11); contudo, duas sessões de 12 km/h sem saturação 
+também ficaram fora da faixa de referência, evidenciando que a ausência de 
+saturação não garante GCT válido, pois outras fontes de erro (fixação, ausência 
+de PCA, resolução do padrão-ouro) também atuam. 
+• H3 (saturação de 3,35% gera GCT acim a de 400 ms; 1,85% não compromete): 
+confirmada. O atleta T11 (3,35%) apre sentou GCT de 477 ms, e o atleta T47 
+(1,85%) manteve GCT de 100 ms. 
+• H4 (menor variância de cadência por velocidade angular que por aceleração): 
+confirmada. Em condições comparáv eis de esteira, o desvio-padrão da 
+cadência foi de 4 a 32 spm (Falbriard), contra 29 a 91 spm no PoC1 por 
+aceleração. 
+A contribuição principal deste ciclo foi a integração hardware, firmware, aplicativo 
+e protocolo de campo, executada com recursos de graduação, em condição funcional 
+e entregável ao SESI. O sistema demonstrou que uma IMU de baixo custo (cerca de 
+R$ 80 o conjunto) estima cadência com prec isão equivalente à literatura, em atletas 
+paralímpicos e em condições de campo. A limitação principal de GCT é corrigível por 
+uma alteração de firmware (já aplicada na Etapa 11) e pela calibração funcional por 
+PCA (módulo desenvolvido). 
+Como trabalhos futuros, destacam-se: recoleta do atleta T11 com a faixa de 
+±2000 °/s; implementação da calibração por PCA; uso de um segundo sensor para 
+análise de assimetria bilateral no atleta T47; dashboard do Kinexa com visualização 
+em tempo real; e feedback sonoro ao atleta-guia do atleta T11, atendendo ao requisito 
+de feedback em tempo real previsto no enunciado original. 
+  
+
+--- PAGE 30 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+30 
+6  CRONOGRAMA 
+O cronograma foi estruturado a partir da Estr utura Analítica do Projeto (EAP), com 
+semanas numeradas a partir de 03/05/2026.  A Tabela 2 apresenta o status de 
+execução: X = previsto; ✓ = executado ou antecipado. Atingiu-se, como entregável, 
+um sistema em nível de protótipo func ional: dois dispositivos ESP32-C3, 
+encapsulamentos impressos em 3D, fixação por velcro e aplicativo Kinexa (Etapa 11, 
+BLE wireless). Os itens pendentes foram movidos para trabalhos futuros (Seção 5). 
+Tabela 2 - Cronograma semanal de execução (semanas a partir de 03/05/2026). 
+Entregável 1 2 3 4 5 6 7 8 
+Relatório parcial X        
+PoC1 - dataset Phyphox (aceleração) X        
+PoC1 - análise e limitações X ✓       
+PoC2 - aquisição IMU (bancada) X X       
+PoC2 - firmware ESP32-C3 + LittleFS  ✓ ✓      
+PoC3 - IMU no pé, fixação funcional   X X     
+PoC3 - coleta SESI (esteira + pista)    ✓     
+Pipeline Python (trim + Falbriard)    ✓ ✓    
+Validação vs. literatura e vs. vídeo     ✓ ✓   
+BLE wireless (Etapa 11) + ±2000 °/s      ✓   
+Aplicativo Kinexa (6 telas)      ✓ ✓  
+Protótipo funcional (2 ESP, case 3D, 
+velcro)      ✓ ✓  
+Relatório final       ✓ ✓ 
+Apresentação final (banca)        X 
+Fonte: elaborado pelos autores (2026). 
+  
+
+--- PAGE 31 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+31 
+REFERÊNCIAS 
+ARISTIZÁBAL PLA, J. et al. Evaluating the relationship between negative foot speed and sprint 
+performance using shoe-mounted inertial sensors. PLOS ONE, v. 19, n. 12, p. e0303920, 2024. 
+BARTLETT, R. Introduction to sports biomechanics: analysing human movement patterns. 2. ed. 
+London: Routledge, 2007.
+ 
+BARTOLOMEI, S. et al. A wearable inertial measurement unit system for the assessment of running 
+and jumping performance. Applied Sciences, v. 14, n. 8, p. 3232, 2024.
+ 
+BLAND, J. M.; ALTMAN, D. G. Statistical methods for assessing agreement between two methods of 
+clinical measurement. The Lancet, v. 1, n. 8476, p. 307-310, 1986. 
+BLAUBERGER, P.; HORSCH, A.; LAMES, M. Detection of sprint events in sprinting with inertial 
+measurement units. Sensors, v. 21, n. 21, p. 7331, 2021.
+ 
+BONACCI, J. et al. Frontal-plane trunk and pelvic asymmetries during single-leg tasks in Paralympic 
+athletes with upper-limb deficiency. JOSPT Open, 2024. 
+FALBRIARD, M. et al. Accurate estimation of running temporal parameters using foot-worn inertial 
+sensors. Frontiers in Physiology, v. 9, p. 610, 2018.
+ 
+GARCÍA-PINILLOS, F. et al. Effects of running velocity on spatiotemporal parameters as measured 
+using an inertial measurement unit. International Journal of Sports Medicine, v. 40, n. 9, p. 612-619, 
+2019. 
+GIAVARINA, D. Understanding Bland Altman analysis. Biochemia Medica, v. 25, n. 2, p. 141-151, 2015. 
+GOUTTEBARGE, V. et al. Temporal step parameters of running: reliability and sensitivity to speed 
+changes. Journal of Human Kinetics, v. 45, p. 19-26, 2015.
+ 
+GRAUBNER, R.; NIXDORF, E. Biomechanical analysis of the sprint and hurdles events at the 2009 
+IAAF World Championships in Athletics. New Studies in Athletics, v. 26, n. 1/2, p. 19-53, 2011. 
+HOBARA, H. et al. Step-to-step variability and complexity of bilateral ground reaction forces in amputee 
+athletes using running-specific prostheses. Gait & Posture, v. 39, n. 1, p. 386-390, 2014.
+ 
+KINOVEA. Kinovea [software de análise de movimento]. v. 0.9.5. Disponível em: 
+https://www.kinovea.org. Acesso em: jun. 2026.
+ 
+MADGWICK, S. O. H.; HARRISON, A. J. L.; VAIDYANATHAN, R. Estimation of IMU and MARG 
+orientation using a gradient descent algorithm. In: IEEE INTERNATIONAL CONFERENCE ON 
+REHABILITATION ROBOTICS, 2011, Zurich. Proceedings... Zurich: IEEE, 2011. p. 1-7.
+ 
+MARTÍN-FUENTES, I.; VAN DEN TILLAAR, R. Relationship between step-by-step foot kinematics and 
+sprint performance. International Journal of Environmental Research and Public Health, v. 19, n. 11, p. 
+6786, 2022. 
+MURO-DE-LA-HERRÁN, Á.; GARCÍA-ZAPIRAIN, B.; MÉNDEZ-ZORRILLA, A. Gait analysis methods: 
+an overview of wearable and non-wearable systems, highlighting clinical applications. Sensors, v. 14, 
+n. 2, p. 3362-3394, 2014. 
+NUMMELA, A.; KERÄNEN, T.; MIKKELSSON, L. O. Factors related to top running speed and economy. 
+International Journal of Sports Medicine, v. 28, n. 8, p. 655-661, 2007. 
+
+--- PAGE 32 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+32 
+POTTER, M. et al. Effect of IMU design on IMU-derived stride metrics for running. Sensors, v. 19, n. 11, 
+p. 2601, 2019. 
+SERVIÇO SOCIAL DA INDÚSTRIA (SESI-SP). Programa SESI Esporte apresenta nova metodologia 
+para democratizar e impulsionar o acesso ao esporte no Brasil. Ribeirão Preto: SESI-SP, 2025. 
+Disponível em: https://ribeiraopreto.sesisp.org.br/noticia/programa-sesi-esporte. Acesso em: 27 abr. 
+2026.
+ 
+TAO, W. et al. Gait analysis using wearable sensors. Sensors, v. 12, n. 2, p. 2255-2283, 2012. 
+TUDOR-LOCKE, C. et al. Cadence (steps/min) and intensity during ambulation in 21-40 year olds: 
+CADENCE-adults. International Journal of Behavioral Nutrition and Physical Activity, v. 16, p. 23, 2019.
+ 
+TUKEY, J. W. Exploratory data analysis. Reading: Addison-Wesley, 1977. 
+WEYAND, P. G. et al. Faster top running speeds are achieved with greater ground forces not more rapid 
+leg movements. Journal of Applied Physiology, v. 89, n. 5, p. 1991-1999, 2000.
+ 
+WORLD HEALTH ORGANIZATION (WHO). WHO guidelines on physical activity and sedentary 
+behaviour. Geneva: WHO, 2020. 
+ZATSIORSKY, V. M.; DE LEVA, P. Adjustments to Zatsiorsky-Seluyanov's segment inertia parameters. 
+Journal of Biomechanics, v. 29, n. 9, p. 1223-1230, 1996. 
+  
+
+--- PAGE 33 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+33 
+APÊNDICE A - Capturas de tela do aplicativo Kinexa 
+As Figuras A.1 a A.6 apresentam as seis telas do aplicativo Kinexa, na ordem de uso 
+em campo. Os nomes exibidos nas telas são dados de demonstração, não 
+correspondendo a atletas reais. 
+ 
+Figura A.1 - Dashboard 
+ 
+Figura A.2 - Nova coleta 
+
+
+--- PAGE 34 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+34 
+ 
+Figura A.3 - Validação BLE 
+ 
+Figura A.4 - Posicionamento do sensor 
+
+
+--- PAGE 35 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+35 
+ 
+Figura A.5 - Calibração 
+ 
+Figura A.6 - Gravação em andamento 
+Fonte: elaborado pelos autores (2026), mockup Figma. 
+  
+
+
+--- PAGE 36 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+36 
+APÊNDICE B - Painéis de validação adicionais 
+Painéis de validação das sessões não incluídas no corpo principal. 
+ 
+Figura B.1 - Voluntário controle a 4 km/h (sessão 2). 
+Fonte: elaborado pelos autores (2026). 
+ 
+Figura B.2 - Atleta T47 a 10 km/h (sessão 2). 
+Fonte: elaborado pelos autores (2026). 
+
+
+--- PAGE 37 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+37 
+ 
+Figura B.3 - Atleta T47 a 12 km/h (sessão 1). 
+Fonte: elaborado pelos autores (2026). 
+ 
+Figura B.4 - Atleta T47 a 12 km/h (sessão 2). 
+Fonte: elaborado pelos autores (2026). 
+
+
+--- PAGE 38 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+38 
+ 
+Figura B.5 - Atleta T47 a 14 km/h (sessão 2). 
+Fonte: elaborado pelos autores (2026). 
+ 
+Figura B.6 - Atleta T47 a 14 km/h (sessão 3). 
+Fonte: elaborado pelos autores (2026). 
+
+
+--- PAGE 39 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+39 
+ 
+Figura B.7 - Atleta T11 na pista (sessão 2). 
+Fonte: elaborado pelos autores (2026). 
+  
+
+
+--- PAGE 40 ---
+Grupo 7 - Análise da corrida com IMUs - FICSAE 2026 
+40 
+APÊNDICE C - Trechos do pipeline em Python 
+Trechos comentados do módulo ana lisar_sesi.py (v4). Repositório: 
+antoniofaical/PBL_2026_1. 
+C.1  Filtragem Butterworth (regra dos dois filtros) 
+def butter_lp(sinal, fc, fs=500.0, ordem=2): 
+    fc = min(fc, 0.45 * fs) 
+    b, a = butter(ordem, fc / (fs / 2.0), btype="low") 
+    return filtfilt(b, a, sinal)   # fase zero (sem atraso) 
+  
+# regra dos dois filtros (Falbriard 2018): 
+gp_mid = butter_lp(gy, fc=5.0)    # 1 pico de mid-swing por passada 
+gp_ict = butter_lp(gy, fc=30.0)   # localizacao precisa de CI e CT 
+C.2  Trimming adaptativo por IQR 
+def trim_janela_auto(picos, fs, min_s=0.20, min_passos=5): 
+    dts = np.diff(picos.astype(float)) / fs 
+    q25, q75 = np.percentile(dts, 25), np.percentile(dts, 75) 
+    iqr = q75 - q25 
+    auto_max = min(2.5, q75 + 1.5 * iqr) 
+    auto_min = max(min_s, q25 - 1.5 * iqr) 
+    valido = (dts >= auto_min) & (dts <= auto_max) 
+    # ... seleciona o maior bloco contiguo de intervalos validos 
+C.3  Detecção de CI e CT (estimadores k1 e t1) 
+def detectar_ic_tc(gp_ict, picos, margem=5): 
+    ic, tc = [], [] 
+    for i in range(len(picos) - 1): 
+        p1, p2 = int(picos[i]), int(picos[i + 1]) 
+        meio = (p1 + p2) // 2 
+        if p1 + margem < meio: 
+            ic.append(p1 + int(np.argmin(gp_ict[p1:meio])))  # CI = k1 
+        if meio + margem < p2: 
+            tc.append(meio + int(np.argmin(gp_ict[meio:p2]))) # CT = t1 
+    return np.array(ic), np.array(tc) 

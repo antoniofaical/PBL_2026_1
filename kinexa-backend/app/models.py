@@ -16,10 +16,31 @@ from app.database import Base
 #   2 = Pista Externa
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    runs: Mapped[list["Run"]] = relationship("Run", back_populates="owner")
+
+
 class Run(Base):
     __tablename__ = "runs"
 
     run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     device_id: Mapped[str] = mapped_column(String, nullable=False)
     datetime: Mapped[str] = mapped_column(String, nullable=False)
     athlete: Mapped[str] = mapped_column(String, nullable=False)
@@ -46,6 +67,7 @@ class Run(Base):
         nullable=False,
     )
 
+    owner: Mapped["User"] = relationship("User", back_populates="runs")
     events: Mapped[list["Event"]] = relationship(
         "Event",
         back_populates="run",

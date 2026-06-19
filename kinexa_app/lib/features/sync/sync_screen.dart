@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+import '../../core/boot/app_boot.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_radii.dart';
 import '../../core/theme/app_text_styles.dart';
@@ -13,53 +14,126 @@ import '../../core/widgets/sync_brand_header.dart';
 import '../../core/widgets/sync_version_footer.dart';
 import '../../debug/demo_runs_seed.dart';
 import '../../providers.dart';
+import '../../router.dart';
 
-enum SyncUiState { syncing, failed, success }
+enum SyncUiState { syncing, failed, authRequired, success }
 
 class SyncScreen extends ConsumerStatefulWidget {
-  const SyncScreen({super.key});
+  const SyncScreen({super.key, this.startFailed = false});
+
+  /// Servidor indisponível na splash — exibe falha sem tentar sync.
+  final bool startFailed;
 
   @override
   ConsumerState<SyncScreen> createState() => _SyncScreenState();
 }
 
 class _SyncScreenState extends ConsumerState<SyncScreen> {
-  SyncUiState _state = SyncUiState.syncing;
+  static Future<void>? _uiSyncFuture;
+
+  late SyncUiState _state;
+  bool _bootstrapped = false;
+  String? _failureDetail;
 
   @override
   void initState() {
     super.initState();
-    _sync();
+    _state = widget.startFailed ? SyncUiState.failed : SyncUiState.syncing;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
+  }
+
+  Future<void> _bootstrap() async {
+    if (_bootstrapped || !mounted) return;
+    _bootstrapped = true;
+
+    if (widget.startFailed) {
+      ref.read(serverOnlineProvider.notifier).state = false;
+      setState(() {
+        _failureDetail =
+            'Boot offline: health check falhou na splash (sem requests de sync).';
+      });
+      return;
+    }
+
+    if (!authGate.value || bootPhase.value != BootPhase.syncing) {
+      context.go('/auth');
+      return;
+    }
+
+    await _sync();
   }
 
   Future<void> _sync() async {
-    setState(() => _state = SyncUiState.syncing);
+    if (!authGate.value || bootPhase.value != BootPhase.syncing) {
+      if (mounted) context.go('/auth');
+      return;
+    }
+
+    _uiSyncFuture ??= _runSync().whenComplete(() => _uiSyncFuture = null);
+    await _uiSyncFuture;
+  }
+
+  Future<void> _runSync() async {
+    if (!mounted) return;
+    setState(() {
+      _state = SyncUiState.syncing;
+      _failureDetail = null;
+    });
+
     final syncRepo = ref.read(syncRepositoryProvider);
     try {
-      final result = await syncRepo.syncAll();
-      ref.read(serverOnlineProvider.notifier).state = result.online;
+      // Splash já validou health; não repetir aqui (evita falso offline).
+      final result = await syncRepo.syncAll(skipHealthCheck: true);
+      if (!mounted) return;
+
+      ref.read(serverOnlineProvider.notifier).state = true;
       if (result.success) {
         ref.read(offlineModeProvider.notifier).state = false;
+        bootPhase.value = BootPhase.ready;
         setState(() => _state = SyncUiState.success);
         await Future.delayed(const Duration(milliseconds: 900));
-        if (mounted) context.go('/home');
+        if (!mounted) return;
+        context.go('/home');
+      } else if (result.authRequired) {
+        authGate.value = false;
+        bootPhase.value = BootPhase.auth;
+        ref.read(authUserProvider.notifier).state = null;
+        setState(() => _state = SyncUiState.authRequired);
       } else {
-        setState(() => _state = SyncUiState.failed);
+        setState(() {
+          _state = SyncUiState.failed;
+          _failureDetail = result.message ??
+              result.error?.toString() ??
+              'Erro desconhecido (online=${result.online})';
+        });
       }
-    } catch (_) {
-      setState(() => _state = SyncUiState.failed);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _state = SyncUiState.failed;
+        _failureDetail = e.toString();
+      });
     }
   }
 
   Future<void> _offline() async {
     ref.read(offlineModeProvider.notifier).state = true;
     ref.read(serverOnlineProvider.notifier).state = false;
+    bootPhase.value = BootPhase.ready;
     await seedDemoRunsIfEmpty(
       ref.read(runRepositoryProvider),
       ref.read(settingsDaoProvider),
     );
     if (!mounted) return;
     context.go('/home');
+  }
+
+  void _retry() {
+    if (widget.startFailed) {
+      context.go('/splash');
+      return;
+    }
+    _sync();
   }
 
   @override
@@ -89,6 +163,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       SyncUiState.syncing => _syncingBody(),
       SyncUiState.success => _successBody(),
       SyncUiState.failed => _failedBody(),
+      SyncUiState.authRequired => _authRequiredBody(),
     };
   }
 
@@ -168,7 +243,51 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     );
   }
 
+  Widget _authRequiredBody() {
+    return KinexaScrollReveal(
+      padding: const EdgeInsets.symmetric(horizontal: 28),
+      child: Column(
+        children: [
+          Icon(
+            Symbols.lock_reset,
+            size: 88,
+            color: AppColors.redPrimary,
+          ),
+          const SizedBox(height: 40),
+          Text(
+            'SESSÃO EXPIRADA',
+            style: AppTextStyles.mono(
+              size: 22,
+              weight: FontWeight.w700,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Entre novamente para sincronizar com o servidor.',
+            style: AppTextStyles.mono(
+              size: 16,
+              color: AppColors.textMuted,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 40),
+          KinexaButton.round(
+            label: 'Ir para login',
+            onPressed: () {
+              authGate.value = false;
+              bootPhase.value = BootPhase.auth;
+              context.go('/auth');
+            },
+            expanded: true,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _failedBody() {
+    final offlineBoot = widget.startFailed;
     return KinexaScrollReveal(
       padding: const EdgeInsets.symmetric(horizontal: 28),
       child: Column(
@@ -180,9 +299,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
           ),
           const SizedBox(height: 49),
           Text(
-            'FALHA NA SINCRONIZAÇÃO!',
+            offlineBoot ? 'SERVIDOR INDISPONÍVEL' : 'FALHA NA SINCRONIZAÇÃO!',
             style: AppTextStyles.mono(
-              size: 25,
+              size: offlineBoot ? 22 : 25,
               weight: FontWeight.w700,
               letterSpacing: 0,
             ),
@@ -190,7 +309,9 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
           ),
           const SizedBox(height: 24),
           Text(
-            'Não foi possível conectar ao servidor. Verifique sua conexão à internet ou tente novamente.',
+            offlineBoot
+                ? 'Não foi possível validar o servidor na inicialização. Verifique a conexão ou o endereço em Servidor.'
+                : 'Não foi possível concluir a sincronização local. Os dados podem ter sido baixados do servidor.',
             style: AppTextStyles.mono(
               size: 18,
               color: AppColors.textMuted,
@@ -198,10 +319,32 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
             ),
             textAlign: TextAlign.center,
           ),
+          if (_failureDetail != null) ...[
+            const SizedBox(height: 20),
+            Text(
+              'DETALHE TÉCNICO',
+              style: AppTextStyles.mono(
+                size: 11,
+                weight: FontWeight.w700,
+                color: AppColors.textMuted,
+                letterSpacing: 1.2,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _failureDetail!,
+              style: AppTextStyles.mono(
+                size: 12,
+                color: AppColors.redLight,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
           const SizedBox(height: 49),
           KinexaButton.round(
-            label: 'Tentar novamente',
-            onPressed: _sync,
+            label: offlineBoot ? 'Tentar inicialização' : 'Tentar novamente',
+            onPressed: _retry,
             expanded: true,
           ),
           const SizedBox(height: 20),

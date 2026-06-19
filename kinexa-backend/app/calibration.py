@@ -31,7 +31,7 @@ def calibration_from_csv_content(csv_content: str) -> dict[str, Any] | None:
     """Extrai calibração do CSV; None se schema app (sem colunas de calib)."""
     df = load_csv(content=csv_content)
     calib = extract_calibration(df)
-    if calib.get("source_format") != "csv_serial":
+    if calib.get("source_format") not in ("csv_app", "csv_serial"):
         return None
     bias = calib["gyro_bias_lsb"]
     grav = calib["gravity_T_lsb"]

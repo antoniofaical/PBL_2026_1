@@ -49,6 +49,10 @@ def analyze_run_file(
     manual_events: list[dict] | None = None,
     window_start_ms: float | None = None,
     window_end_ms: float | None = None,
+    session_name: str = "",
+    activity: int | None = None,
+    athlete: str = "",
+    notes: str = "",
 ) -> dict:
     """Executa pipeline analítico sobre CSV em disco (opcionalmente recortado)."""
     df = load_csv(path=csv_path)
@@ -68,7 +72,14 @@ def analyze_run_file(
     else:
         start_ms, end_ms = rec_start, rec_end
 
-    result = analyze_dataframe(df)
+    name = session_name or csv_path.stem
+    result = analyze_dataframe(
+        df,
+        session_name=name,
+        activity=activity,
+        athlete=athlete,
+        notes=notes,
+    )
 
     result["window"] = {
         "start_ms": start_ms,
@@ -87,9 +98,13 @@ def analyze_run_file(
         merged = manual + auto
         merged.sort(key=lambda e: e["t_ms"])
         result["events"] = merged
+        result["events_auto"] = auto
+        result["events_manual"] = manual
         result["manual_event_count"] = len(manual)
     else:
         result["events"] = auto
+        result["events_auto"] = auto
+        result["events_manual"] = []
 
     return result
 
@@ -99,6 +114,10 @@ def analyze_run_window(
     manual_events: list[dict] | None,
     start_s: float,
     end_s: float,
+    session_name: str = "",
+    activity: int | None = None,
+    athlete: str = "",
+    notes: str = "",
 ) -> dict:
     """Analisa trecho [start_s, end_s] relativo ao início da coleta (t=0)."""
     df = load_csv(path=csv_path)
@@ -110,6 +129,10 @@ def analyze_run_window(
         manual_events=manual_events,
         window_start_ms=start_ms,
         window_end_ms=end_ms,
+        session_name=session_name,
+        activity=activity,
+        athlete=athlete,
+        notes=notes,
     )
 
 
@@ -129,7 +152,12 @@ def get_or_analyze(
             .order_by(RunAnalysis.created_at.desc())
             .first()
         )
-        if existing and existing.status == "completed" and existing.result_json:
+        if (
+            existing
+            and existing.status == "completed"
+            and existing.result_json
+            and existing.analysis_version == ANALYSIS_VERSION
+        ):
             return existing, json.loads(existing.result_json)
 
     csv_file = Path(run.csv_path)
@@ -138,7 +166,14 @@ def get_or_analyze(
 
     manual = _manual_events(run)
     try:
-        result = analyze_run_file(csv_file, manual_events=manual)
+        result = analyze_run_file(
+            csv_file,
+            manual_events=manual,
+            session_name=Path(run.csv_path).stem,
+            activity=run.activity,
+            athlete=run.athlete or "",
+            notes=run.notes or "",
+        )
         status = "completed"
     except Exception as exc:
         result = {"error": str(exc), "analysis_version": ANALYSIS_VERSION}
@@ -164,9 +199,9 @@ def get_or_analyze(
         analysis.steps_detected = cad.get("steps_detected")
         analysis.mean_gct_ms = gct.get("mean_ms")
         analysis.std_gct_ms = gct.get("std_ms")
-
-        if run.quality_status is None:
-            run.quality_status = q.get("quality_status")
+        flt = result.get("flight_time") or {}
+        if flt.get("mean_ms") is not None:
+            result.setdefault("flight_time", flt)
 
     db.add(analysis)
     db.commit()

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../../core/constants/enums.dart';
+import '../../core/boot/app_boot.dart';
 import '../../debug/demo_runs_seed.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_gradients.dart';
@@ -37,6 +38,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    bootPhase.value = BootPhase.ready;
     _load();
     _tryAutoSync();
   }

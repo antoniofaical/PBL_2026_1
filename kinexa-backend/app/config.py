@@ -11,6 +11,11 @@ DATABASE_URL: str = os.getenv(
     "DATABASE_URL",
     "postgresql://user:password@localhost:5432/kinexa",
 )
+SECRET_KEY: str = os.getenv(
+    "SECRET_KEY",
+    "kinexa-dev-secret-change-in-production",
+)
+SESSION_MAX_AGE: int = int(os.getenv("SESSION_MAX_AGE", str(60 * 60 * 24 * 7)))
 UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", "uploads"))
 if not UPLOAD_DIR.is_absolute():
     UPLOAD_DIR = BASE_DIR / UPLOAD_DIR

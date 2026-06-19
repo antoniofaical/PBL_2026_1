@@ -24,6 +24,25 @@ def create_tables() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_existing()
+    _seed_auth()
+
+
+def _seed_auth() -> None:
+    from app.auth import ensure_seed_users
+
+    db = SessionLocal()
+    try:
+        users = ensure_seed_users(db)
+        admin = users["admin"]
+        from sqlalchemy import text
+
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE runs SET user_id = :uid WHERE user_id IS NULL"),
+                {"uid": admin.id},
+            )
+    finally:
+        db.close()
 
 
 def _migrate_existing() -> None:
@@ -55,3 +74,8 @@ def _migrate_existing() -> None:
                 conn.execute(text(
                     f"ALTER TABLE runs ADD COLUMN {col} {sql_type}"
                 ))
+
+        if insp.has_table("users") and "user_id" not in run_cols:
+            conn.execute(text(
+                "ALTER TABLE runs ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE"
+            ))

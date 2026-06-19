@@ -33,8 +33,8 @@ class EventModel {
       );
 
   factory EventModel.fromApiJson(Map<String, dynamic> json) => EventModel(
-        id: json['id'] as int?,
-        timestampMs: json['timestamp_ms'] as int,
+        id: json['id'] == null ? null : (json['id'] as num).toInt(),
+        timestampMs: (json['timestamp_ms'] as num).toInt(),
         description: json['description'] as String?,
       );
 

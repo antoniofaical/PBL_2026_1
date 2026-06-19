@@ -9,6 +9,12 @@
 {% if deleted %}
 <p class="flash-ok">Coleta excluída com sucesso.</p>
 {% endif %}
+{% if current_user.username == 'demo' and seeded %}
+<p class="flash-ok">Coleta simulada criada: <code>{{ seeded }}</code></p>
+{% endif %}
+{% if current_user.username == 'demo' and cleared is not none %}
+<p class="flash-ok">{{ cleared }} coleta(s) removida(s).</p>
+{% endif %}
 
 <section class="section-block">
   {% if runs_enriched %}
@@ -23,14 +29,10 @@
         {% if run.calib_valid %}<span class="pill pill-muted">Calib OK</span>{% elif run.calib_valid is none %}<span class="pill pill-accent">Sem calib</span>{% endif %}
         {% if analysis and analysis.duration_ms %}{{ "%.1f"|format(analysis.duration_ms / 1000) }} s{% else %}—{% endif %}
         · {{ run.sample_count or (analysis.sample_count if analysis else "—") }} amostras
-        {% if analysis and analysis.mean_fs_hz %} · {{ analysis.mean_fs_hz }} Hz{% endif %}
       </p>
       <div class="run-card-footer">
         <span class="run-card-date">{{ run.datetime }}</span>
         <div class="run-card-actions">
-          {% if run.quality_status %}
-          <span class="pill pill-muted">{{ run.quality_status | quality_label }}</span>
-          {% endif %}
           {% if analysis %}
           <span class="pill {% if analysis.status == 'completed' %}pill-muted{% else %}pill-accent{% endif %}">{{ analysis.status | analysis_status_label }}</span>
           {% else %}
@@ -48,4 +50,19 @@
   <p class="empty-state">Nenhuma coleta registrada ainda.</p>
   {% endif %}
 </section>
+
+{% if current_user.username == 'demo' %}
+<section class="card card-dev kx-card">
+  <h2 class="section-title section-title-sm">Dev (temporário)</h2>
+  <p class="hint">Ferramentas de teste — afetam apenas as coletas desta conta demo.</p>
+  <div class="dev-actions">
+    <form method="post" action="/dev/seed-run">
+      <button type="submit" class="btn">+ Adicionar coleta simulada</button>
+    </form>
+    <form method="post" action="/dev/clear-runs" onsubmit="return confirm('Remover todas as suas coletas? Esta ação não pode ser desfeita.');">
+      <button type="submit" class="btn btn-danger">Limpar coletas</button>
+    </form>
+  </div>
+</section>
+{% endif %}
 {% endblock %}

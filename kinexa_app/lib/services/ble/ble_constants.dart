@@ -14,7 +14,7 @@ class KinexaBleConfig {
   static const scanTimeout = Duration(seconds: 10);
   static const connectTimeout = Duration(seconds: 15);
   static const commandTimeout = Duration(seconds: 8);
-  static const calibrateTimeout = Duration(seconds: 20);
+  static const calibrateTimeout = Duration(seconds: 35);
   static const recordingStartTimeout = Duration(seconds: 2);
   static const commandResponseTimeout = Duration(seconds: 2);
   static const statusNotifyTimeout = Duration(seconds: 4);

@@ -75,6 +75,9 @@ class KinexaMetadataTextField extends StatelessWidget {
     this.maxLines = 1,
     this.height = 71,
     this.labelBackgroundColor = AppColors.popupBackground,
+    this.obscureText = false,
+    this.textInputAction,
+    this.onSubmitted,
   });
 
   final String label;
@@ -82,6 +85,9 @@ class KinexaMetadataTextField extends StatelessWidget {
   final int maxLines;
   final double height;
   final Color labelBackgroundColor;
+  final bool obscureText;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
 
   static const _noBorder = InputDecoration(
     filled: false,
@@ -114,6 +120,9 @@ class KinexaMetadataTextField extends StatelessWidget {
           controller: controller,
           expands: true,
           maxLines: null,
+          obscureText: obscureText,
+          textInputAction: textInputAction,
+          onSubmitted: onSubmitted,
           style: AppTextStyles.mono(size: 24, letterSpacing: 0),
           cursorColor: AppColors.redPrimary,
           cursorWidth: 2,

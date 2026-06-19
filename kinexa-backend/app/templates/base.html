@@ -7,21 +7,26 @@
   <link rel="stylesheet" href="/static/style.css">
   {% block head_extra %}{% endblock %}
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
   <header class="site-header">
     <div class="container header-inner">
       <a href="/" class="logo-link" aria-label="Kinexa — início">
         <img src="/static/logo-kinexa.svg" alt="Kinexa — Movimento. Dados. Desempenho." class="logo-img">
       </a>
       <nav class="header-nav">
+        {% if current_user %}
         <a href="/" class="nav-link{% if request.url.path == '/' %} is-active{% endif %}">Dashboard</a>
         <a href="/runs" class="nav-link{% if request.url.path.startswith('/runs') %} is-active{% endif %}">Coletas</a>
+        <a href="/fundamentacao" class="nav-link{% if request.url.path == '/fundamentacao' %} is-active{% endif %}">Fundamentação</a>
         <a href="/docs" class="nav-link">API</a>
+        <span class="nav-user">{{ current_user.username }}</span>
+        <a href="/logout" class="nav-link nav-link-muted">Sair</a>
+        {% endif %}
       </nav>
     </div>
   </header>
 
-  <main class="container main-content">
+  <main class="{% block main_class %}container main-content{% endblock %}">
     {% block content %}{% endblock %}
   </main>
 

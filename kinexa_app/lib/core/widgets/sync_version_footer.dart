@@ -9,7 +9,7 @@ class SyncVersionFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      AppConstants.appVersionLabel,
+      '${AppConstants.appVersionLabel} · ${AppConstants.buildLabel}',
       style: AppTextStyles.mono(
         size: 12,
         color: const Color(0xFFBBBBBB),

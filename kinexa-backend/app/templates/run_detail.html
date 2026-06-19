@@ -41,20 +41,20 @@
     <dt>Amostras</dt>
     <dd>{{ run.sample_count or "—" }}</dd>
 
-    <dt>Qualidade</dt>
+    {% if sensor_gyro %}
+    <dt>Faixa do giroscópio</dt>
     <dd>
-      {% if run.quality_status %}
-      <span class="badge badge-quality badge-{{ run.quality_status }}">{{ run.quality_status | quality_label }}</span>
-      {% else %}
-      <span class="badge badge-muted">Não classificada</span>
-      {% endif %}
+      <span class="sensor-range-badge">{{ sensor_gyro.range_label }}</span>
+      <span class="hint sensor-range-hint">{{ sensor_gyro.note }}</span>
     </dd>
+    {% endif %}
 
     <dt>Análise</dt>
     <dd>
       {% if latest_analysis %}
       <span class="badge badge-analysis badge-{{ latest_analysis.status }}">{{ latest_analysis.status | analysis_status_label }}</span>
       {% if latest_analysis.cadence_spm %} — {{ latest_analysis.cadence_spm }} spm est.{% endif %}
+      {% if latest_analysis.mean_gct_ms %} · contato {{ latest_analysis.mean_gct_ms|int }}{% if latest_analysis.std_gct_ms %} ± {{ latest_analysis.std_gct_ms|int }}{% endif %} ms{% endif %}
       {% else %}
       <span class="badge badge-muted">Pendente</span>
       {% endif %}
@@ -97,36 +97,21 @@
     </dd>
     <dt>Origem</dt>
     <dd>{{ run.calib_source | calib_source_label }}</dd>
-    <dt>Gyro bias (LSB)</dt>
-    <dd><code>{{ calib.gyro_bias_lsb[0] | round(2) }}, {{ calib.gyro_bias_lsb[1] | round(2) }}, {{ calib.gyro_bias_lsb[2] | round(2) }}</code></dd>
-    <dt>Gravidade g<sub>T</sub> (LSB)</dt>
-    <dd><code>{{ calib.gravity_T_lsb[0] | round(1) }}, {{ calib.gravity_T_lsb[1] | round(1) }}, {{ calib.gravity_T_lsb[2] | round(1) }}</code></dd>
-    <dt>‖g<sub>T</sub>‖</dt>
-    <dd>{{ calib.gravity_norm_lsb | round(0) }} LSB <span class="hint">(esperado ≈4096)</span></dd>
+    {% if calib_disp.gyro_bias_dps %}
+    <dt>Bias giroscópio</dt>
+    <dd>{{ calib_disp.gyro_bias_dps[0] }}, {{ calib_disp.gyro_bias_dps[1] }}, {{ calib_disp.gyro_bias_dps[2] }} °/s</dd>
+    {% endif %}
+    {% if calib_disp.gravity_g %}
+    <dt>Gravidade (g)</dt>
+    <dd>{{ calib_disp.gravity_g[0] }}, {{ calib_disp.gravity_g[1] }}, {{ calib_disp.gravity_g[2] }} g</dd>
+    <dt>‖g‖</dt>
+    <dd>{{ calib_disp.gravity_norm_g }} g</dd>
+    {% endif %}
   </dl>
-  <p class="hint">Persistido no banco para análise e futuro sync app/firmware. O CSV bruto mantém a mesma calibração por amostra.</p>
+  <p class="hint">Valores usados na conversão para unidades SI na análise.</p>
   {% else %}
   <p class="empty-state">Calibração ausente — coleta via app sem biases ou CSV incompleto. Previsto sync app/firmware.</p>
   {% endif %}
-</section>
-
-<section class="kx-card card-soft">
-  <h2 class="section-title section-title-sm">Classificar qualidade</h2>
-  <p class="hint">Marque a coleta após revisão — não altera o CSV bruto.</p>
-  <div class="actions actions-row">
-    <form method="post" action="/runs/{{ run.run_id }}/quality" class="inline-form">
-      <input type="hidden" name="quality_status" value="valid">
-      <button type="submit" class="btn btn-sm">Válida</button>
-    </form>
-    <form method="post" action="/runs/{{ run.run_id }}/quality" class="inline-form">
-      <input type="hidden" name="quality_status" value="suspect">
-      <button type="submit" class="btn btn-sm btn-outline">Suspeita</button>
-    </form>
-    <form method="post" action="/runs/{{ run.run_id }}/quality" class="inline-form">
-      <input type="hidden" name="quality_status" value="invalid">
-      <button type="submit" class="btn btn-sm btn-danger">Inválida</button>
-    </form>
-  </div>
 </section>
 
 <section class="kx-card">

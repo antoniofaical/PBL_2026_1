@@ -32,22 +32,54 @@ def count_csv_samples(csv_content: str) -> int:
     return len(data_lines)
 
 
-def get_run(db: Session, run_id: str) -> Run | None:
+def get_run_by_id(db: Session, run_id: str) -> Run | None:
+    """Busca coleta por ID (sem filtro de usuário — upload/import)."""
     return db.query(Run).filter(Run.run_id == run_id).first()
 
 
-def get_runs(db: Session, skip: int = 0, limit: int | None = None) -> list[Run]:
-    query = db.query(Run).order_by(Run.created_at.desc()).offset(skip)
+def get_run(db: Session, run_id: str, user_id: int) -> Run | None:
+    return (
+        db.query(Run)
+        .filter(Run.run_id == run_id, Run.user_id == user_id)
+        .first()
+    )
+
+
+def get_runs(
+    db: Session,
+    user_id: int,
+    skip: int = 0,
+    limit: int | None = None,
+) -> list[Run]:
+    query = (
+        db.query(Run)
+        .filter(Run.user_id == user_id)
+        .order_by(Run.created_at.desc())
+        .offset(skip)
+    )
     if limit is not None:
         query = query.limit(limit)
     return query.all()
 
 
-def get_dashboard_stats(db: Session) -> dict:
-    total_runs = db.query(func.count(Run.run_id)).scalar() or 0
-    total_athletes = db.query(func.count(func.distinct(Run.athlete))).scalar() or 0
-    total_events = db.query(func.count(Event.id)).scalar() or 0
-    recent_runs = get_runs(db, limit=5)
+def get_dashboard_stats(db: Session, user_id: int) -> dict:
+    total_runs = (
+        db.query(func.count(Run.run_id)).filter(Run.user_id == user_id).scalar() or 0
+    )
+    total_athletes = (
+        db.query(func.count(func.distinct(Run.athlete)))
+        .filter(Run.user_id == user_id)
+        .scalar()
+        or 0
+    )
+    total_events = (
+        db.query(func.count(Event.id))
+        .join(Run, Event.run_id == Run.run_id)
+        .filter(Run.user_id == user_id)
+        .scalar()
+        or 0
+    )
+    recent_runs = get_runs(db, user_id, limit=5)
     return {
         "total_runs": total_runs,
         "total_athletes": total_athletes,
@@ -102,7 +134,11 @@ def backfill_all_calibrations(db: Session) -> int:
     return updated
 
 
-def create_run_from_upload(db: Session, payload: RunUpload) -> tuple[Run, int]:
+def create_run_from_upload(
+    db: Session,
+    payload: RunUpload,
+    user_id: int,
+) -> tuple[Run, int]:
     sample_count = count_csv_samples(payload.csv)
     csv_path = safe_csv_path(payload.run_id)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +146,7 @@ def create_run_from_upload(db: Session, payload: RunUpload) -> tuple[Run, int]:
 
     run = Run(
         run_id=payload.run_id,
+        user_id=user_id,
         device_id=payload.device_id,
         datetime=payload.datetime,
         athlete=payload.athlete,
@@ -216,9 +253,14 @@ def set_quality_status(db: Session, run: Run, status: str) -> Run:
     return run
 
 
-def get_runs_with_analysis(db: Session, skip: int = 0, limit: int | None = None) -> list[dict]:
+def get_runs_with_analysis(
+    db: Session,
+    user_id: int,
+    skip: int = 0,
+    limit: int | None = None,
+) -> list[dict]:
     """Lista runs enriquecidas com última análise (para tabela do dashboard)."""
-    runs = get_runs(db, skip=skip, limit=limit)
+    runs = get_runs(db, user_id, skip=skip, limit=limit)
     enriched = []
     for run in runs:
         analysis = get_latest_analysis(db, run.run_id)
@@ -226,12 +268,12 @@ def get_runs_with_analysis(db: Session, skip: int = 0, limit: int | None = None)
     return enriched
 
 
-def create_simulated_run(db: Session) -> Run:
+def create_simulated_run(db: Session, user_id: int) -> Run:
     """Coleta de exemplo para testes do dashboard (temporário)."""
     now = datetime.now(timezone.utc)
     run_id = f"sim_{now.strftime('%Y%m%d_%H%M%S')}"
     suffix = 0
-    while get_run(db, run_id):
+    while get_run_by_id(db, run_id):
         suffix += 1
         run_id = f"sim_{now.strftime('%Y%m%d_%H%M%S')}_{suffix}"
 
@@ -256,7 +298,7 @@ def create_simulated_run(db: Session) -> Run:
         ],
         csv="\n".join(csv_rows) + "\n",
     )
-    run, _ = create_run_from_upload(db, payload)
+    run, _ = create_run_from_upload(db, payload, user_id=user_id)
     return run
 
 
@@ -267,3 +309,12 @@ def delete_run(db: Session, run: Run) -> None:
     db.commit()
     if csv_file.is_file():
         csv_file.unlink()
+
+
+def delete_all_runs_for_user(db: Session, user_id: int) -> int:
+    """Remove todas as coletas (e CSVs) de um usuário."""
+    runs = get_runs(db, user_id)
+    count = len(runs)
+    for run in runs:
+        delete_run(db, run)
+    return count

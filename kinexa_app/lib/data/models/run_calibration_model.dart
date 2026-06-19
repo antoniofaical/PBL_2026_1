@@ -34,8 +34,20 @@ class RunCalibrationModel {
   }
 
   static RunCalibrationModel? tryFromApiJson(Map<String, dynamic> json) {
-    if (json['calib_gx_bias_lsb'] == null) return null;
-    return RunCalibrationModel.fromApiJson(json);
+    const keys = [
+      'calib_gx_bias_lsb',
+      'calib_gy_bias_lsb',
+      'calib_gz_bias_lsb',
+      'calib_g_T_x_lsb',
+      'calib_g_T_y_lsb',
+      'calib_g_T_z_lsb',
+    ];
+    if (!keys.every((k) => json[k] != null)) return null;
+    try {
+      return RunCalibrationModel.fromApiJson(json);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Extrai calibração da primeira linha de dados de um CSV com schema completo.

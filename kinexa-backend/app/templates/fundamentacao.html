@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+
+{% block title %}Fundamentação teórica — Kinexa{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Fundamentação teórica</h1>
+<p class="page-subtitle">
+  Base científica e decisões de engenharia do projeto Kinexa — desenvolvido em grupo no PBL FICSAE 2026.
+</p>
+
+<section class="kx-card theory-section">
+  <h2 class="section-title section-title-sm">1. Problema e motivação</h2>
+  <p>
+    Parâmetros temporais da corrida — <strong>cadência</strong> (passos por minuto, spm),
+    <strong>tempo de contato com o solo</strong> e <strong>tempo de voo</strong> — relacionam-se a
+    economia de corrida, desempenho e risco de lesão. Plataformas de força e câmeras de alta velocidade
+    são precisas, mas pouco portáteis para o campo.
+  </p>
+  <p>
+    Existem dispositivos comerciais <em>foot-worn</em> — sensores inerciais fixados ao pé, como os usados
+    em estudos de referência (Falbriard et al., 2018) — capazes de estimar esses parâmetros, porém com
+    custo elevado (tipicamente milhares de reais por unidade, fora do alcance de projetos educacionais e
+    de muitos contextos de treino). Na prática, costumam entregar o hardware e software de análise de
+    forma fragmentada: coleta em campo, sincronização com vídeo, calibração rastreável e revisão
+    sistemática dos resultados exigem ferramentas e fluxos adicionais que nem sempre estão incluídos.
+  </p>
+  <p>
+    No contexto do SESI, atletas paralímpicos treinam em condições de campo — esteira e pista — onde
+    técnicos e pesquisadores precisam acompanhar parâmetros temporais da corrida sem laboratório
+    instrumentado nem orçamento para equipamentos de pesquisa de ponta. Há, portanto, uma lacuna entre
+    o que a literatura demonstra ser viável com <strong>Unidade de Medida Inercial (IMU)</strong> no pé
+    e o que está acessível para monitoramento rotineiro de treino.
+  </p>
+</section>
+
+<section class="kx-card theory-section">
+  <h2 class="section-title section-title-sm">2. Evolução do método e base em Falbriard et al. (2018)</h2>
+  <p>
+    O projeto seguiu três provas de conceito (<em>Proof of Concept</em>, PoC). Na <strong>PoC1</strong>
+    (Phyphox, aceleração no smartphone), a cadência variou mais de 30 spm entre passadas do mesmo atleta —
+    inviabilizando a abordagem por aceleração linear. Na <strong>PoC2</strong>, validamos aquisição e
+    firmware no ESP32-C3. Na <strong>PoC3</strong>, fixamos o sensor no pé e adotamos o método de
+    Falbriard et al. (2018): velocidade angular de <em>pitch</em> do pé (Ω<sub>p</sub>) como sinal
+    principal, com detecção de contato inicial e retirada do pé a partir dos mínimos de Ω<sub>p</sub>
+    entre picos consecutivos de meio-balanço, após filtragem passa-baixa.
+  </p>
+  <p>
+    Falbriard et al. (2018) validaram o algoritmo em 41 corredores com esteira instrumentada como
+    referência, reportando viés mediano de cerca de 15&nbsp;ms no tempo de contato e precisão inferior a
+    4&nbsp;ms na detecção de eventos — com regra de mínimos de Ω<sub>p</sub> filtrado a 30&nbsp;Hz como
+    melhor desempenho entre várias features testadas. Adotamos essa lógica com dois filtros Butterworth:
+    5&nbsp;Hz para isolar picos de meio-balanço e 30&nbsp;Hz para localizar contato inicial e retirada do pé.
+  </p>
+  <p>
+    A escolha de Ω<sub>p</sub> em detrimento da norma de aceleração reduz ambiguidade na detecção de
+    eventos: o sinal de aceleração apresenta múltiplos picos por passada e pode saturar em velocidades
+    elevadas (Potter et al., 2019), enquanto Ω<sub>p</sub> exibe um pico positivo por passada no
+    meio-balanço, com menor sensibilidade ao limiar de detecção (Falbriard et al., 2018).
+  </p>
+</section>
+
+<section class="kx-card theory-section">
+  <h2 class="section-title section-title-sm">3. Montagem e hardware</h2>
+  <dl class="meta-grid theory-grid">
+    <dt>Posição</dt>
+    <dd>MPU6050 no <strong>dorso do pé</strong>, eixo X para os dedos — mesma convenção de montagem descrita por Falbriard et al. (2018).</dd>
+    <dt>Ω<sub>p</sub></dt>
+    <dd>Componente <code>gyro.y</code> em °/s, após calibração de bias de giroscópio.</dd>
+    <dt>Taxa de amostragem</dt>
+    <dd>500&nbsp;Hz no firmware; frequência efetiva estimada pelos timestamps <code>t_ms</code>.</dd>
+    <dt>Faixa do giroscópio</dt>
+    <dd>±2000°/s no firmware atual; as 13 coletas iniciais do banco foram feitas com ±1000°/s.</dd>
+    <dt>Encapsulamento</dt>
+    <dd>Case impresso em 3D com fixação por velcro nas coletas mais recentes.</dd>
+    <dt>Calibração estática</dt>
+    <dd>Bias de giroscópio e vetor gravidade no repouso, executada quando o dispositivo liga ou quando o operador solicita pelo app — não a cada início de coleta.</dd>
+  </dl>
+</section>
+
+<section class="kx-card theory-section">
+  <h2 class="section-title section-title-sm">4. Pipeline de análise</h2>
+  <p class="hint">
+    O pipeline replica o protocolo de Falbriard et al. (2018) com adaptações para o MPU6050 e o fluxo de
+    campo do Kinexa.
+  </p>
+  <ol class="theory-pipeline">
+    <li><strong>Conversão para unidades SI</strong> — amostras brutas → °/s, com sensibilidade lida do cabeçalho do CSV ou da faixa configurada no firmware.</li>
+    <li><strong>Filtro 5&nbsp;Hz</strong> — detecção de picos de meio-balanço (distância mínima ≈ frequência de amostragem / 4,5; altura 80°/s).</li>
+    <li><strong>Janela estável</strong> — intervalo interquartílico (<em>Interquartile Range</em>, IQR) dos intervalos entre picos isola o trecho de marcha ou corrida estável, descartando repouso e transições.</li>
+    <li><strong>Filtro 30&nbsp;Hz</strong> — localização de contato inicial e retirada do pé pelos mínimos de Ω<sub>p</sub>, conforme a regra k1/t1 de Falbriard et al. (2018).</li>
+    <li><strong>Métricas</strong> — cadência (spm), tempo de contato (ms) e tempo de voo (ms, somente corrida), expressos como média ± desvio-padrão por passada.</li>
+  </ol>
+  <p class="hint">
+    O dashboard permite recortar trechos da coleta sem reprocessar o arquivo bruto — útil em sessões longas
+    com aceleração, ritmo estável e transições de velocidade.
+  </p>
+</section>
+
+<section class="kx-card theory-section">
+  <h2 class="section-title section-title-sm">5. Validação por vídeo</h2>
+  <p>
+    A validação quantitativa do dispositivo foi conduzida <strong>após</strong> as coletas de campo,
+    comparando o Kinexa a marcadores rastreados em vídeo a 60&nbsp;Hz no software Kinovea (4º metatarso e
+    calcâneo). O contato inicial foi definido pelo mínimo vertical do calcâneo; a retirada do pé, pelo
+    início da elevação do metatarso. A sincronização IMU ↔ vídeo usou o protocolo de <em>stomps</em>
+    (três pisadas firmes no início e fim de cada sessão filmada).
+  </p>
+  <p>
+    A concordância foi avaliada por <strong>análise de Bland–Altman</strong> (Bland &amp; Altman, 1986) em
+    nível de <strong>sessão</strong> — uma observação por sessão de esteira com vídeo disponível —,
+    quantificando o viés sistemático e os <em>Limits of Agreement</em> (LoA) de 95%. Os critérios de
+    aceitabilidade seguem Falbriard et al. (2018): ±3 spm para cadência e ±15 ms para tempo de contato.
+  </p>
+  <dl class="meta-grid theory-grid">
+    <dt>Cadência (n = 6, esteira)</dt>
+    <dd>Viés <strong>+0,33 spm</strong> · LoA <strong>[−2,4; +3,0] spm</strong> · r = 0,998 — critério cumprido.</dd>
+    <dt>Tempo de contato (n = 5, esteira)</dt>
+    <dd>Viés <strong>−15,6 ms</strong> · LoA <strong>[−50; +19] ms</strong> — critério de ±15 ms não cumprido.</dd>
+  </dl>
+  <p>
+    A cadência foi validada quantitativamente contra vídeo nas sessões de esteira filmadas. O tempo de
+    contato não atingiu o critério de Falbriard et al. (2018) nesse conjunto — resultado atribuível em
+    parte à fixação por fita nas coletas originais, à saturação histórica do giroscópio em ±1000°/s em
+    algumas sessões, e à resolução de 16,7 ms do vídeo a 60 Hz. As sessões de <strong>pista externa</strong>
+    não entraram na análise de Bland–Altman por ausência de gravação de vídeo sincronizada.
+  </p>
+</section>
+
+<section class="kx-card theory-section">
+  <h2 class="section-title section-title-sm">6. Resultados em campo (resumo)</h2>
+  <p>
+    Foram analisadas <strong>13 sessões de coleta</strong> (esteira e pista, atletas paralímpicos e controle)
+    com o pipeline descrito acima. Trata-se de estimativas biomecânicas obtidas <em>antes</em> da validação
+    formal por vídeo; portanto, os números de campo devem ser lidos como resultados exploratórios do
+    algoritmo em condições reais, não como medidas já certificadas no momento da coleta.
+  </p>
+  <p>
+    Em síntese qualitativa: a cadência ficou dentro das faixas de referência do protocolo interno em todas
+    as sessões. O tempo de contato foi plausível na maioria das corridas em esteira; no sprint em pista do
+    atleta T47, cadência de 257 spm e contato de 100 ms foram coerentes com a literatura de elite. Sessões
+    com saturação do giroscópio acima de cerca de 2,6% (Potter et al., 2019) — nas coletas originais em
+    ±1000°/s — produziram contatos fisicamente implausíveis, enquanto a cadência permaneceu plausível: a
+    saturação deforma os mínimos de Ω<sub>p</sub> usados para contato inicial e retirada do pé, mas afeta
+    menos os intervalos entre picos de meio-balanço.
+  </p>
+  <p>
+    A saturação foi desprezível em esteira (0,00–0,08%) e relevante em pista (1,85% a 3,35%). O firmware
+    atual opera em ±2000°/s; as 13 coletas já importadas no dashboard correspondem à faixa anterior.
+  </p>
+</section>
+
+<section class="kx-card theory-section">
+  <h2 class="section-title section-title-sm">7. Limitações atuais</h2>
+  <ul class="theory-list">
+    <li>
+      <strong>Saturação histórica</strong> — as 13 coletas do banco foram registradas com giroscópio em
+      ±1000°/s; sessões de sprint em pista podem ter sofrido <em>clipping</em> do sinal, comprometendo
+      especialmente o tempo de contato mesmo quando a cadência permanece plausível.
+    </li>
+    <li>
+      <strong>Fixação por fita</strong> — as coletas do SESI usaram fita adesiva; microdeslizamento do
+      sensor é fonte provável de variância elevada no tempo de contato. Coletas posteriores com velcro
+      ainda não foram revalidadas por vídeo.
+    </li>
+    <li>
+      <strong>Validação por sessão</strong> — a análise de Bland–Altman usou n = 6 (cadência) e n = 5
+      (tempo de contato) observações em nível de sessão de esteira, sem concordância passada a passada;
+      pista externa ficou de fora por falta de vídeo.
+    </li>
+    <li>
+      <strong>Calibração pontual</strong> — bias de giroscópio e vetor gravidade são atualizados quando o
+      dispositivo liga ou quando o operador executa calibração pelo app, não automaticamente a cada nova
+      coleta; deslocamento físico do sensor entre calibração e corrida não é corrigido em tempo real.
+    </li>
+  </ul>
+</section>
+
+<section class="kx-card theory-section">
+  <h2 class="section-title section-title-sm">8. O que o sistema entrega hoje</h2>
+  <div class="theory-table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr><th>Com confiança</th><th>Ainda em evolução</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Cadência validada por vídeo em esteira (viés &lt; 1 spm)</td>
+          <td>Tempo de contato dentro do critério de ±15 ms de Falbriard et al. (2018)</td>
+        </tr>
+        <tr>
+          <td>Tendências longitudinais de contato entre sessões</td>
+          <td>Parâmetros em pista com saturação histórica (±1000°/s)</td>
+        </tr>
+        <tr>
+          <td>Coleta, sync, calibração rastreável e dashboard de análise integrados</td>
+          <td>Validação por vídeo das coletas com fixação por velcro</td>
+        </tr>
+        <tr>
+          <td>Log de eventos manuais via app Kinexa</td>
+          <td>Feedback em tempo real ao atleta-guia</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="kx-card theory-section card-soft">
+  <h2 class="section-title section-title-sm">Referências</h2>
+  <ol class="theory-refs">
+    <li class="theory-citation">
+      BLAND, J. M.; ALTMAN, D. G. Statistical methods for assessing agreement between two methods of
+      clinical measurement. <em>The Lancet</em>, v. 1, n. 8476, p. 307–310, 1986.
+    </li>
+    <li class="theory-citation">
+      FALBRIARD, M. et al. Accurate Estimation of Running Temporal Parameters Using Foot-Worn Inertial
+      Sensors. <em>Frontiers in Physiology</em>, v. 9, p. 610, 2018.
+      <a href="https://doi.org/10.3389/fphys.2018.00610" target="_blank" rel="noopener">doi:10.3389/fphys.2018.00610</a>
+    </li>
+    <li class="theory-citation">
+      GIAVARINA, D. Understanding Bland Altman analysis. <em>Biochemia Medica</em>, v. 25, n. 2, p. 141–151, 2015.
+    </li>
+    <li class="theory-citation">
+      KINOVEA. Kinovea [software de análise de movimento]. Disponível em:
+      <a href="https://www.kinovea.org/" target="_blank" rel="noopener">kinovea.org</a>.
+    </li>
+    <li class="theory-citation">
+      POTTER, C. R. et al. Gait event detection using a foot-worn inertial sensor: impact of sensor
+      placement, sensor orientation and running speed. <em>Gait &amp; Posture</em>, v. 72, p. 193–198, 2019.
+    </li>
+    <li class="theory-citation">
+      TUKEY, J. W. <em>Exploratory Data Analysis</em>. Reading: Addison-Wesley, 1977.
+      <span class="hint">(base do uso do intervalo interquartílico — IQR — no recorte de janela estável)</span>
+    </li>
+  </ol>
+</section>
+
+<section class="kx-card">
+  <div class="actions-row">
+    <a href="/" class="btn btn-outline btn-sm">← Dashboard</a>
+    <a href="/runs" class="btn btn-outline btn-sm">Ver coletas</a>
+  </div>
+</section>
+{% endblock %}

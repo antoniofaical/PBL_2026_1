@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entrar — Kinexa</title>
+  <link rel="stylesheet" href="/static/login.css">
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+      <img
+        src="/static/logo-kinexa.svg"
+        alt="Kinexa"
+        class="login-logo"
+        width="148"
+        height="37"
+      >
+
+      <h1 class="login-title">Entrar</h1>
+      <p class="login-subtitle">Dashboard de análise biomecânica Kinexa</p>
+
+      {% if error %}
+      <p class="login-error">{{ error }}</p>
+      {% endif %}
+
+      <form method="post" action="/login" class="login-form">
+        {% if next_url %}
+        <input type="hidden" name="next" value="{{ next_url }}">
+        {% endif %}
+        <div class="login-field">
+          <label for="username">Usuário</label>
+          <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+        </div>
+        <div class="login-field">
+          <label for="password">Senha</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="login-submit">Entrar</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

@@ -93,17 +93,24 @@ class RunModel {
       deviceId: json['device_id'] as String,
       datetime: json['datetime'] as String,
       athlete: json['athlete'] as String,
-      activity: json['activity'] as int,
-      environment: json['environment'] as int,
+      activity: (json['activity'] as num).toInt(),
+      environment: (json['environment'] as num).toInt(),
       notes: json['notes'] as String?,
       csvPath: json['csv_path'] as String?,
       csvContent: csvContent,
-      sampleCount: json['sample_count'] as int?,
+      sampleCount: json['sample_count'] == null
+          ? null
+          : (json['sample_count'] as num).toInt(),
       createdAt: json['created_at']?.toString(),
       syncStatus: SyncStatus.synced,
       calibration: RunCalibrationModel.tryFromApiJson(json),
       events: eventsJson
-          .map((e) => EventModel.fromApiJson(e as Map<String, dynamic>))
+          .map((e) {
+            final map = e is Map<String, dynamic>
+                ? e
+                : Map<String, dynamic>.from(e as Map);
+            return EventModel.fromApiJson(map);
+          })
           .toList(),
     );
   }

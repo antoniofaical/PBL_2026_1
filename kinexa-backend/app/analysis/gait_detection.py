@@ -109,7 +109,7 @@ def build_auto_events(
             "confidence": 0.65,
             "source": "auto",
             "axis": axis,
-            "note": "estimado por IMU — detecção exploratória",
+            "note": "Falbriard et al. (2018) — mínimo de Ωp entre mid-swings",
         })
 
     for idx in tc_indices:
@@ -119,7 +119,7 @@ def build_auto_events(
             "confidence": 0.60,
             "source": "auto",
             "axis": axis,
-            "note": "estimado por IMU — detecção exploratória",
+            "note": "Falbriard et al. (2018) — mínimo de Ωp entre mid-swings",
         })
 
     events.sort(key=lambda e: e["t_ms"])

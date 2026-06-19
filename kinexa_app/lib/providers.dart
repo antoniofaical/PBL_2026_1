@@ -7,13 +7,26 @@ import 'data/models/device_model.dart';
 import 'data/models/event_model.dart';
 import 'data/models/run_model.dart';
 import 'data/remote/api_service.dart';
+import 'data/remote/dio_client.dart';
 import 'data/remote/http_api_service.dart';
+import 'data/repositories/auth_repository.dart';
 import 'data/repositories/device_repository.dart';
 import 'data/repositories/run_repository.dart';
 import 'data/repositories/sync_repository.dart';
 export 'services/ble/ble_service_provider.dart';
 
-final apiServiceProvider = Provider<ApiService>((ref) => HttpApiService());
+final apiServiceProvider = Provider<ApiService>(
+  (ref) => HttpApiService(dio: DioClient.dio),
+);
+
+final authRepositoryProvider = Provider<AuthRepository>(
+  (ref) => AuthRepository(
+    ref.read(settingsDaoProvider),
+    DioClient.dio,
+  ),
+);
+
+final authUserProvider = StateProvider<String?>((ref) => null);
 
 final runDaoProvider = Provider<RunDao>(
   (ref) => RunDao(LocalDatabase.instance),
@@ -32,6 +45,7 @@ final syncRepositoryProvider = Provider<SyncRepository>(
     ref.read(apiServiceProvider),
     ref.read(runRepositoryProvider),
     ref.read(settingsDaoProvider),
+    ref.read(authRepositoryProvider),
   ),
 );
 

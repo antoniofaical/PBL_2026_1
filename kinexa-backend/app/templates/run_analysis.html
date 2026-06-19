@@ -1,376 +1,257 @@
 {% extends "base.html" %}
 
-
-
 {% block title %}Análise — {{ run.run_id }} — Kinexa{% endblock %}
 
-
-
 {% block head_extra %}
-
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
-
 <script src="/static/analysis_charts.js" defer></script>
-
 {% endblock %}
 
-
-
 {% block content %}
-
 <div class="breadcrumb">
-
   <a href="/runs">← Coletas</a>
-
   <span class="breadcrumb-sep">/</span>
-
   <a href="/runs/{{ run.run_id }}">Detalhe</a>
-
 </div>
 
-
-
 <h1 class="page-title">Análise biomecânica</h1>
-
 <p class="page-subtitle">
-
-  Velocidade angular (Ωp) — estimativas exploratórias por IMU. Requer validação profissional.
-
+  Estimativas a partir da IMU no pé. <a href="/fundamentacao">Fundamentação do projeto</a>.
 </p>
 
-
-
 {% if analyzed %}
-
 <p class="flash-ok">Análise processada com sucesso.</p>
-
 {% endif %}
-
-
 
 {% set q = analysis.quality or {} %}
-
 {% set cad = analysis.cadence %}
-
 {% set gct = analysis.gct %}
-
+{% set flt = analysis.flight_time %}
+{% set lit = analysis.literature_validation %}
+{% set method = analysis.method or {} %}
 {% set win = analysis.window or {} %}
-
-
+{% set auto_events = analysis.events_auto if analysis.events_auto is defined else (analysis.events | selectattr('source', 'equalto', 'auto') | list) %}
+{% set manual_events = analysis.events_manual if analysis.events_manual is defined else (analysis.events | selectattr('source', 'equalto', 'manual') | list) %}
 
 <section class="section-block" id="analysis-summary">
-
   <div class="section-header-row">
-
     <h2 class="section-title">Resumo do trecho</h2>
-
     <span class="window-badge" id="window-mode-badge">
-
       {% if win.is_windowed %}Trecho selecionado{% else %}Coleta completa{% endif %}
-
     </span>
-
   </div>
-
   <div class="stats-row">
-
     <div class="stat-card kx-card">
-
       <span class="stat-digital" id="stat-duration">{{ q.duration_s or "—" }}</span>
-
       <span class="stat-caption">Duração (s)</span>
-
     </div>
-
     <div class="stat-card kx-card">
-
       <span class="stat-digital" id="stat-samples">{{ q.sample_count or "—" }}</span>
-
       <span class="stat-caption">Amostras</span>
-
     </div>
-
+    {% if q.gap_count %}
     <div class="stat-card kx-card">
-
-      <span class="stat-digital stat-digital-sm" id="stat-fs">{{ q.mean_fs_hz or "—" }}</span>
-
-      <span class="stat-caption">Fs (Hz)</span>
-
+      <span class="stat-digital stat-digital-sm" id="stat-gaps">{{ q.gap_count }}</span>
+      <span class="stat-caption">Gaps no sinal</span>
     </div>
-
-    <div class="stat-card kx-card">
-
-      <span class="stat-digital stat-digital-sm" id="stat-cadence">{% if cad %}{{ cad.cadence_spm }}{% else %}—{% endif %}</span>
-
-      <span class="stat-caption">Cadência est.</span>
-
-    </div>
-
-    <div class="stat-card kx-card">
-
-      <span class="stat-digital stat-digital-sm" id="stat-gct">{% if gct and gct.mean_ms %}{{ gct.mean_ms|int }}{% else %}—{% endif %}</span>
-
-      <span class="stat-caption">GCT est. (ms)</span>
-
-    </div>
-
-    <div class="stat-card kx-card stat-card-wide">
-
-      <span class="stat-badge stat-badge-{{ q.quality_status or 'unknown' }}" id="stat-quality">{{ q.quality_status | quality_label }}</span>
-
-      <span class="stat-caption" id="stat-gaps">Qualidade · gaps {{ q.gap_count or 0 }}</span>
-
-    </div>
-
+    {% endif %}
   </div>
-
 </section>
-
-
 
 <section class="kx-card">
-
   <h2 class="section-title section-title-sm">Ações</h2>
-
   <div class="actions-row">
-
     <form method="post" action="/runs/{{ run.run_id }}/analyze" class="inline-form">
-
       <button type="submit" class="btn">Reprocessar coleta</button>
-
     </form>
-
     <a href="/api/runs/{{ run.run_id }}/csv" class="btn btn-outline btn-sm">CSV bruto</a>
-
     <a href="/api/runs/{{ run.run_id }}/analysis/export" class="btn btn-outline btn-sm">JSON</a>
-
     <a href="/api/runs/{{ run.run_id }}/events/export" class="btn btn-outline btn-sm">Eventos CSV</a>
-
     <a href="/runs/{{ run.run_id }}" class="btn btn-outline btn-sm">Detalhe</a>
-
   </div>
-
 </section>
-
-
 
 {% if calib.present %}
-
 <section class="kx-card card-soft">
-
   <h2 class="section-title section-title-sm">Calibração aplicada</h2>
-
-  <p class="hint">Bias de giroscópio usado na conversão SI — origem: {{ run.calib_source | calib_source_label }}.</p>
-
+  <p class="hint">Origem: {{ run.calib_source | calib_source_label }}.</p>
   <dl class="meta-grid">
-
-    <dt>Bias (LSB)</dt>
-
-    <dd><code>{{ calib.gyro_bias_lsb[0] | round(2) }}, {{ calib.gyro_bias_lsb[1] | round(2) }}, {{ calib.gyro_bias_lsb[2] | round(2) }}</code></dd>
-
-    <dt>‖g<sub>T</sub>‖</dt>
-
-    <dd>{{ calib.gravity_norm_lsb | round(0) }} LSB</dd>
-
+    {% if calib_disp.gyro_bias_dps %}
+    <dt>Bias giroscópio</dt>
+    <dd>{{ calib_disp.gyro_bias_dps[0] }}, {{ calib_disp.gyro_bias_dps[1] }}, {{ calib_disp.gyro_bias_dps[2] }} °/s</dd>
+    {% endif %}
+    {% if calib_disp.gravity_g %}
+    <dt>Gravidade (g)</dt>
+    <dd>{{ calib_disp.gravity_g[0] }}, {{ calib_disp.gravity_g[1] }}, {{ calib_disp.gravity_g[2] }} g</dd>
+  <dt>‖g‖</dt>
+    <dd>{{ calib_disp.gravity_norm_g }} g</dd>
+    {% endif %}
   </dl>
-
 </section>
-
 {% endif %}
 
-
-
-<section class="kx-card">
-
+<section class="kx-card chart-card">
   <h2 class="section-title section-title-sm">Velocidade angular (Ωp)</h2>
-
   <p class="chart-note">
-
-    Pipeline Falbriard: eixo <code id="detection-axis-label">{{ analysis.detection.axis if analysis.detection else 'gy' }}</code>
-
-    · use zoom/pan no gráfico para precisão · arraste as orelhinhas vermelhas para delimitar o trecho analisado.
-
+    Eixo <code id="detection-axis-label">{{ analysis.detection.axis if analysis.detection else 'gy' }}</code> ·
+    arraste as orelhinhas para delimitar o trecho · zoom/pan no gráfico.
   </p>
 
   <div class="window-readout window-readout-chart">
-
     <span>Início <strong id="window-start-label">{{ "%.2f"|format(win.start_s or 0) }}</strong> s</span>
-
     <span class="window-readout-sep">→</span>
-
     <span>Fim <strong id="window-end-label">{{ "%.2f"|format(win.end_s or 0) }}</strong> s</span>
-
     <span class="window-readout-meta" id="window-duration-label">({{ "%.1f"|format(win.duration_s or 0) }} s)</span>
+  </div>
 
+  <div class="chart-metrics-strip" id="chart-metrics-strip">
+    <div class="chart-metric">
+      <span class="chart-metric-val" id="stat-cadence">{% if cad %}{{ cad.cadence_spm | format_mean_std(cad.cadence_std_spm) }} spm{% else %}—{% endif %}</span>
+      <span class="chart-metric-label">Cadência est.</span>
+    </div>
+    <div class="chart-metric">
+      <span class="chart-metric-val" id="stat-gct">{% if gct and gct.mean_ms %}{{ gct.mean_ms | format_mean_std(gct.std_ms) }} ms{% else %}—{% endif %}</span>
+      <span class="chart-metric-label">Tempo de contato</span>
+    </div>
+    <div class="chart-metric">
+      <span class="chart-metric-val" id="stat-flt">{% if flt and flt.mean_ms %}{{ flt.mean_ms | format_mean_std(flt.std_ms) }} ms{% else %}—{% endif %}</span>
+      <span class="chart-metric-label">Tempo de voo</span>
+    </div>
+    <div class="chart-metric chart-metric-sat">
+      <span class="chart-metric-val" id="stat-sat">{{ q.gyro_saturation_pct or 0 }}% @ <span id="stat-sat-range">{{ sensor_gyro.range_label if sensor_gyro else '±1000 °/s' }}</span></span>
+      <div class="sat-meter" aria-hidden="true"><div class="sat-meter-fill" id="sat-meter-fill" style="width: 0%"></div></div>
+      <span class="chart-metric-label">Saturação gyro</span>
+    </div>
+  </div>
+
+  <div class="event-legend" aria-hidden="true">
+    <span class="event-legend-item"><i class="ev-mark ev-ic"></i> Contato inicial</span>
+    <span class="event-legend-item"><i class="ev-mark ev-to"></i> Retirada do pé</span>
+    <span class="event-legend-item"><i class="ev-mark ev-ms"></i> Meio do balanço</span>
+    <span class="event-legend-item"><i class="ev-mark ev-man"></i> Manual</span>
   </div>
 
   <div class="chart-stage" id="chart-stage">
-
     <div id="chart-gyro" class="chart-container"></div>
-
     <div class="chart-handle-layer" id="chart-handle-layer" aria-hidden="true">
-
       <div class="chart-handle chart-handle-start" id="handle-start" role="slider" aria-label="Início da janela de análise" tabindex="0">
-
-        <div class="chart-handle-ear">
-
-          <span class="chart-handle-tag" id="handle-start-tag">início</span>
-
-        </div>
-
+        <div class="chart-handle-ear"><span class="chart-handle-tag" id="handle-start-tag">início</span></div>
         <div class="chart-handle-stem"></div>
-
       </div>
-
       <div class="chart-handle chart-handle-end" id="handle-end" role="slider" aria-label="Fim da janela de análise" tabindex="0">
-
-        <div class="chart-handle-ear">
-
-          <span class="chart-handle-tag" id="handle-end-tag">fim</span>
-
-        </div>
-
+        <div class="chart-handle-ear"><span class="chart-handle-tag" id="handle-end-tag">fim</span></div>
         <div class="chart-handle-stem"></div>
-
       </div>
-
     </div>
-
   </div>
 
   <div class="window-actions">
-
     <button type="button" class="btn btn-outline btn-sm" id="window-reset-btn">Coleta completa</button>
-
     <span class="window-status" id="window-status" aria-live="polite"></span>
-
   </div>
-
-</section>
-
-
-
-<section class="kx-card" id="events-section">
-
-  <h2 class="section-title section-title-sm">Eventos detectados</h2>
-
-  <div id="events-content">
-
-    {% if analysis.events %}
-
-    <div class="table-wrap">
-
-      <table class="data-table">
-
-        <thead>
-
-          <tr>
-
-            <th>Tipo</th>
-
-            <th>ms</th>
-
-            <th>s</th>
-
-            <th>Conf.</th>
-
-            <th>Fonte</th>
-
-          </tr>
-
-        </thead>
-
-        <tbody id="events-tbody">
-
-          {% for ev in analysis.events %}
-
-          <tr>
-
-            <td><code>{{ ev.type }}</code></td>
-
-            <td>{{ ev.t_ms }}</td>
-
-            <td>{{ "%.3f"|format(ev.t_ms / 1000) }}</td>
-
-            <td>{% if ev.confidence %}{{ "%.0f"|format(ev.confidence * 100) }}%{% else %}—{% endif %}</td>
-
-            <td><span class="badge badge-{{ ev.source }}">{{ ev.source }}</span></td>
-
-          </tr>
-
-          {% endfor %}
-
-        </tbody>
-
-      </table>
-
-    </div>
-
-    {% else %}
-
-    <p class="empty-state" id="events-empty">Nenhum evento detectado — sinal pode não permitir detecção confiável.</p>
-
-    {% endif %}
-
-  </div>
-
-</section>
-
-
-
-<section class="kx-card card-soft" id="detection-section">
-
-  <h2 class="section-title section-title-sm">Detecção automática</h2>
 
   {% if analysis.detection %}
-
-  <dl class="meta-grid">
-
-    <dt>Eixo Ωp</dt>
-
-    <dd><code id="det-axis">{{ analysis.detection.axis }}</code></dd>
-
+  <dl class="meta-grid chart-detection-grid">
     <dt>Status</dt>
-
-    <dd id="det-status">{{ analysis.detection.status }}</dd>
-
+    <dd id="det-status">{{ analysis.detection.status | detection_status_label }}</dd>
     <dt>Confiança</dt>
-
     <dd id="det-confidence">{% if analysis.detection.confidence %}{{ "%.0f"|format(analysis.detection.confidence * 100) }}%{% else %}—{% endif %}</dd>
-
     <dt>Mid-swings</dt>
-
-    <dd id="det-midswing">{{ analysis.detection.mid_swing_count }}</dd>
-
+    <dd><span id="det-midswing-raw">{{ analysis.detection.mid_swing_count_raw if analysis.detection.mid_swing_count_raw is defined else '—' }}</span> → <span id="det-midswing">{{ analysis.detection.mid_swing_count }}</span></dd>
     <dt>Passos est.</dt>
-
     <dd id="det-steps">{% if cad %}{{ cad.steps_detected }}{% else %}—{% endif %}</dd>
-
+    <dt>Modo</dt>
+    <dd>{% if method.is_walking %}Caminhada{% else %}Corrida{% endif %}</dd>
   </dl>
-
   <p class="hint hint-warn" id="gct-warn" {% if not gct or gct.status != 'low_confidence' %}hidden{% endif %}>
-
-    GCT calculado com baixa confiança — interpretar com cautela.
-
+    Tempo de contato calculado com baixa confiança — interpretar com cautela.
   </p>
-
-  {% else %}
-
-  <p class="empty-state">Detecção indisponível.</p>
-
   {% endif %}
-
 </section>
 
+{% if lit %}
+<section class="kx-card card-soft" id="literature-section">
+  <h2 class="section-title section-title-sm">Faixa de referência (protocolo SESI)</h2>
+  <p class="hint"><strong>{{ lit.label }}</strong></p>
+  <dl class="meta-grid" id="literature-grid">
+    <dt>Cadência</dt>
+    <dd>
+      <span class="lit-badge lit-{{ lit.cadence.status }}" id="lit-cadence-val">{% if cad %}{{ cad.cadence_spm | format_mean_std(cad.cadence_std_spm) }} spm{% else %}—{% endif %}</span>
+      {% if lit.cadence.range_spm %}<span class="lit-range">ref. {{ lit.cadence.range_spm[0] }}–{{ lit.cadence.range_spm[1] }} spm</span>{% endif %}
+    </dd>
+    <dt>Tempo de contato</dt>
+    <dd>
+      <span class="lit-badge lit-{{ lit.gct.status }}" id="lit-gct-val">{% if gct %}{{ gct.mean_ms | format_mean_std(gct.std_ms) }} ms{% else %}—{% endif %}</span>
+      {% if lit.gct.range_ms %}<span class="lit-range">ref. {{ lit.gct.range_ms[0] }}–{{ lit.gct.range_ms[1] }} ms</span>{% endif %}
+    </dd>
+    <dt>Tempo de voo</dt>
+    <dd>
+      <span class="lit-badge lit-{{ lit.flight_time.status }}" id="lit-flt-val">{% if flt %}{{ flt.mean_ms | format_mean_std(flt.std_ms) }} ms{% else %}—{% endif %}</span>
+      {% if lit.flight_time.range_ms %}<span class="lit-range">ref. {{ lit.flight_time.range_ms[0] }}–{{ lit.flight_time.range_ms[1] }} ms</span>{% endif %}
+    </dd>
+  </dl>
+</section>
+{% endif %}
 
+<section class="kx-card" id="events-section">
+  <details class="collapsible-block" open>
+    <summary class="collapsible-summary">
+      Eventos automáticos
+      <span class="collapsible-count" id="events-auto-count">({{ auto_events | length }})</span>
+    </summary>
+    <div id="events-auto-content">
+    {% if auto_events %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Tipo</th><th>Tempo (s)</th><th>Conf.</th></tr></thead>
+        <tbody>
+          {% for ev in auto_events %}
+          <tr>
+            <td>{{ ev.type | event_type_label }}</td>
+            <td>{{ "%.3f"|format(ev.t_ms / 1000) }}</td>
+            <td>{% if ev.confidence %}{{ "%.0f"|format(ev.confidence * 100) }}%{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">Nenhum evento automático no trecho.</p>
+    {% endif %}
+    </div>
+  </details>
+
+  <details class="collapsible-block">
+    <summary class="collapsible-summary">
+      Eventos marcados manualmente
+      <span class="collapsible-count" id="events-manual-count">({{ manual_events | length }})</span>
+    </summary>
+    <div id="events-manual-content">
+    {% if manual_events %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Tipo</th><th>Tempo (s)</th><th>Conf.</th></tr></thead>
+        <tbody>
+          {% for ev in manual_events %}
+          <tr>
+            <td>{{ ev.type | event_type_label }}</td>
+            <td>{{ "%.3f"|format(ev.t_ms / 1000) }}</td>
+            <td>{% if ev.confidence %}{{ "%.0f"|format(ev.confidence * 100) }}%{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">Nenhuma marcação manual registrada.</p>
+    {% endif %}
+    </div>
+  </details>
+</section>
 
 <script id="chart-data" type="application/json">{{ chart_json | safe }}</script>
-
 <script id="events-data" type="application/json">{{ events_json | safe }}</script>
-
 <script id="window-data" type="application/json">{{ window_json | safe }}</script>
-
+<script id="analysis-quality" type="application/json">{{ {"gyro_saturation_pct": q.gyro_saturation_pct, "gyro_range_dps": sensor_gyro.range_dps if sensor_gyro else 1000} | tojson }}</script>
 <script id="run-meta" type="application/json">{"run_id": {{ run.run_id | tojson }}}</script>
-
 {% endblock %}
-

@@ -120,6 +120,21 @@ a:hover {
   color: var(--kx-text);
 }
 
+.nav-link-muted {
+  opacity: 0.75;
+}
+
+.nav-user {
+  color: var(--kx-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--kx-border);
+  border-radius: 999px;
+}
+
 .section-block {
   margin-bottom: 1.75rem;
 }
@@ -519,8 +534,168 @@ code {
 
 .chart-container {
   width: 100%;
-  min-height: 340px;
+  min-height: 260px;
 }
+
+.chart-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.chart-metrics-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.55rem;
+  margin: 0.35rem 0 0.5rem;
+  padding: 0.65rem 0.75rem;
+  background: var(--kx-card-soft);
+  border: 1px solid var(--kx-border);
+  border-radius: 10px;
+}
+
+.chart-metric-val {
+  display: block;
+  font-family: var(--font-digital);
+  font-size: 1.05rem;
+  color: var(--kx-digital);
+  line-height: 1.2;
+}
+
+.chart-metric-label {
+  display: block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--kx-muted);
+  margin-top: 0.2rem;
+}
+
+.sat-meter {
+  height: 4px;
+  margin: 0.35rem 0 0.15rem;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.sat-meter-fill {
+  height: 100%;
+  background: var(--kx-red);
+  border-radius: 2px;
+  transition: width 0.25s ease;
+}
+
+.sat-meter-fill.sat-meter-warn {
+  background: #f1c40f;
+}
+
+.event-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.68rem;
+  color: var(--kx-muted);
+  margin-bottom: 0.35rem;
+}
+
+.event-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ev-mark {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+}
+
+.ev-ic { background: #E30613; clip-path: polygon(50% 100%, 0 0, 100% 0); }
+.ev-to { background: #FF8C00; }
+.ev-ms { background: #F1C40F; clip-path: polygon(50% 0, 0 100%, 100% 100%); }
+.ev-man { background: #2ECC71; transform: rotate(45deg); width: 8px; height: 8px; }
+
+.chart-detection-grid {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--kx-border);
+}
+
+.section-title-spaced {
+  margin-top: 1.25rem;
+}
+
+.collapsible-block {
+  border: 1px solid var(--kx-border);
+  border-radius: 10px;
+  margin-bottom: 0.65rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.collapsible-block:last-child {
+  margin-bottom: 0;
+}
+
+.collapsible-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--kx-text);
+}
+
+.collapsible-summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-summary::after {
+  content: "▾";
+  color: var(--kx-muted);
+  font-size: 0.85rem;
+  transition: transform 0.15s ease;
+}
+
+.collapsible-block:not([open]) .collapsible-summary::after {
+  transform: rotate(-90deg);
+}
+
+.collapsible-count {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  color: var(--kx-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.collapsible-block > :not(summary) {
+  padding: 0 0.85rem 0.85rem;
+}
+
+.sensor-range-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--kx-digital);
+  padding: 0.2rem 0.55rem;
+  border: 1px solid rgba(227, 6, 19, 0.35);
+  border-radius: 6px;
+  background: rgba(227, 6, 19, 0.08);
+}
+
+.sensor-range-hint {
+  display: block;
+  margin-top: 0.35rem;
+  max-width: 36rem;
+}
+
 
 .chart-stage {
   position: relative;
@@ -700,6 +875,17 @@ body.chart-handle-dragging .ewdrag {
   border-color: rgba(255, 255, 255, 0.18);
 }
 
+.dev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.dev-actions form {
+  margin: 0;
+}
+
 .flash-ok {
   background: rgba(227, 6, 19, 0.12);
   border: 1px solid var(--kx-red);
@@ -816,6 +1002,120 @@ body.chart-handle-dragging .ewdrag {
 
 .window-status-error {
   color: #ffb4b4;
+}
+
+/* Fundamentação teórica */
+.theory-section {
+  margin-bottom: 1.25rem;
+}
+
+.theory-section p,
+.theory-list li {
+  color: var(--kx-text);
+  line-height: 1.65;
+  font-size: 0.92rem;
+}
+
+.theory-list {
+  margin: 0.75rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.theory-list li + li {
+  margin-top: 0.45rem;
+}
+
+.theory-citation {
+  font-size: 0.88rem;
+  color: var(--kx-muted);
+  border-left: 3px solid var(--kx-accent);
+  padding-left: 0.85rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.theory-refs {
+  margin: 0.5rem 0 0;
+  padding-left: 1.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.theory-refs .theory-citation {
+  margin: 0;
+  list-style: decimal;
+}
+
+.theory-pipeline {
+  margin: 0.75rem 0 0;
+  padding-left: 1.35rem;
+  line-height: 1.7;
+  font-size: 0.9rem;
+}
+
+.theory-pipeline ul {
+  margin: 0.35rem 0 0.5rem;
+  padding-left: 1.1rem;
+}
+
+.theory-table-wrap {
+  overflow-x: auto;
+}
+
+.card-wip {
+  border-color: rgba(241, 196, 15, 0.35);
+}
+
+.wip-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.5rem;
+}
+
+.wip-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(241, 196, 15, 0.2);
+  color: #f1c40f;
+  border: 1px solid rgba(241, 196, 15, 0.45);
+}
+
+.wip-checklist {
+  list-style: none;
+  padding-left: 0;
+}
+
+.lit-badge {
+  display: inline-block;
+  font-family: var(--font-digital);
+  font-size: 1rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.lit-ok {
+  color: #6ee7a0;
+  background: rgba(46, 204, 113, 0.12);
+}
+
+.lit-warn {
+  color: #ffb4b4;
+  background: rgba(227, 6, 19, 0.12);
+}
+
+.lit-na {
+  color: var(--kx-muted);
+}
+
+.lit-range {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--kx-muted);
+  margin-top: 0.15rem;
 }
 
 @media (max-width: 640px) {

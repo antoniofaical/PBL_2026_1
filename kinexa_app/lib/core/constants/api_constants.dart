@@ -13,6 +13,9 @@ class ApiConstants {
   static const Duration csvReceiveTimeout = Duration(seconds: 90);
 
   static const String health = '/api/health';
+  static const String authLogin = '/api/auth/login';
+  static const String authMe = '/api/auth/me';
+  static const String authLogout = '/api/auth/logout';
   static const String runs = '/api/runs';
   static String run(String id) => '/api/runs/$id';
   static String runCsv(String id) => '/api/runs/$id/csv';

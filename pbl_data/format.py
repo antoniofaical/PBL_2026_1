@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import struct
 
-# MPU6050 no firmware: ±8 g, ±1000 °/s, 500 Hz
+# MPU6050 no firmware: ±8 g, ±2000 °/s, 500 Hz (GYRO_CONFIG=0x18, v2)
 ACCEL_SENSITIVITY_LSB_PER_G = 4096.0
-GYRO_SENSITIVITY_LSB_PER_DPS = 32.8
+GYRO_SENSITIVITY_LSB_PER_DPS = 16.4
 SAMPLE_RATE_HZ = 500.0
 
 # Cabeçalho LittleFS: 6 floats + bool + padding = 28 bytes

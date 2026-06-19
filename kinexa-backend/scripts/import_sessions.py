@@ -14,7 +14,8 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
-from app.crud import create_run_from_upload, get_run
+from app.auth import get_user_by_username
+from app.crud import create_run_from_upload, get_run_by_id
 from app.database import SessionLocal, create_tables
 from app.schemas import RunUpload
 
@@ -72,9 +73,9 @@ def read_csv_datetime(csv_path: Path) -> str | None:
     return None
 
 
-def import_session(db, csv_path: Path, *, dry_run: bool = False) -> str:
+def import_session(db, csv_path: Path, *, dry_run: bool = False, user_id: int) -> str:
     run_id = csv_path.stem
-    existing = get_run(db, run_id)
+    existing = get_run_by_id(db, run_id)
     if existing:
         return f"SKIP  {run_id} (já existe)"
 
@@ -98,7 +99,7 @@ def import_session(db, csv_path: Path, *, dry_run: bool = False) -> str:
     if dry_run:
         return f"DRY   {run_id} — {meta['athlete']} | env={meta['environment']} | {dt}"
 
-    create_run_from_upload(db, payload)
+    create_run_from_upload(db, payload, user_id=user_id)
     return f"OK    {run_id} — {meta['athlete']} ({meta['notes'][:50]}…)"
 
 
@@ -158,11 +159,15 @@ def main() -> None:
     create_tables()
     db = SessionLocal()
     try:
+        admin = get_user_by_username(db, "admin")
+        if not admin:
+            print("ERRO  usuário admin não encontrado — execute create_tables() primeiro.")
+            sys.exit(1)
         for path in paths:
             if not path.is_file():
                 print(f"MISS  {path} — arquivo não encontrado")
                 continue
-            print(import_session(db, path, dry_run=args.dry_run))
+            print(import_session(db, path, dry_run=args.dry_run, user_id=admin.id))
     finally:
         db.close()
 

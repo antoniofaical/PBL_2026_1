@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from app.analysis.constants import ACCEL_SAT_LSB, GYRO_SAT_LSB, SAMPLE_RATE_HZ
+from app.analysis.constants import ADC_SAT_LSB, SAMPLE_RATE_HZ
 from app.analysis.preprocessing import estimate_fs_hz
 
 
@@ -25,12 +25,9 @@ def _count_gaps(t_ms: np.ndarray, gap_factor: float = 3.0) -> int:
 
 def _count_saturation(signals: dict[str, np.ndarray]) -> int:
     count = 0
-    for key in ("ax_raw", "ay_raw", "az_raw"):
+    for key in ("ax_raw", "ay_raw", "az_raw", "gx_raw", "gy_raw", "gz_raw"):
         arr = np.abs(signals[key])
-        count += int(np.sum(arr >= ACCEL_SAT_LSB))
-    for key in ("gx_raw", "gy_raw", "gz_raw"):
-        arr = np.abs(signals[key])
-        count += int(np.sum(arr >= GYRO_SAT_LSB))
+        count += int(np.sum(arr >= ADC_SAT_LSB))
     return count
 
 
@@ -62,9 +59,9 @@ def compute_signal_quality(
     elif gap_count > 0:
         status = "suspect"
         reasons.append("gaps temporais")
-    elif saturation_count > n * 0.01:
+    elif saturation_count > n * 0.005:
         status = "suspect"
-        reasons.append("possível saturação")
+        reasons.append("possível saturação do ADC")
     elif not calib.get("valid", False):
         status = "suspect"
         reasons.append("calibração não confirmada no CSV")
